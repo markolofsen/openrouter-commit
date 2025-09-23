@@ -128,6 +128,22 @@ export class CoreOrchestrator {
         commitProgress.succeed('Commit created successfully!');
         
         contextualLogger.success(`Commit: ${commitMessage}`);
+
+        // Check if push is requested or needed
+        if (options.autoPush || (options.push && await this.shouldPush(options))) {
+          const pushProgress = contextualLogger.startProgress('Pushing to remote...');
+          try {
+            await gitManager.pushToRemote(true); // Set upstream if needed
+            pushProgress.succeed('Pushed to remote successfully!');
+            contextualLogger.success('Changes pushed to remote repository');
+          } catch (error) {
+            pushProgress.fail('Failed to push to remote');
+            contextualLogger.warn(`Push failed: ${(error as Error).message}`);
+          }
+        } else if (await gitManager.hasUnpushedCommits()) {
+          // Suggest push if there are unpushed commits
+          contextualLogger.info('💡 Tip: Use --push to automatically push changes or --auto-push for future commits');
+        }
       } else {
         contextualLogger.info('Commit cancelled by user');
       }
@@ -494,6 +510,24 @@ Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
       provider, 
       stagedFiles: stagedFiles.length 
     });
+  }
+
+  /**
+   * Determine if we should push changes
+   */
+  private async shouldPush(options: CliOptions): Promise<boolean> {
+    // If auto-push is enabled, always push
+    if (options.autoPush) {
+      return true;
+    }
+
+    // If push flag is set but not yes flag, we might want to ask
+    if (options.push && !options.yes) {
+      // For now, just return true. In future, could add interactive confirmation
+      return true;
+    }
+
+    return options.push || false;
   }
 }
 

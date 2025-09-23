@@ -57,6 +57,9 @@ class CliApplication {
       // Caching options
       .option('--no-cache', 'Disable caching', false)
       .option('--clear-cache', 'Clear cache before generating', false)
+      // Git push options
+      .option('--push', 'Push changes to remote after commit', false)
+      .option('--auto-push', 'Automatically push all future commits', false)
       .action(async (options: CliOptions) => {
         await this.handleCommitCommand(options);
       });

@@ -368,6 +368,57 @@ export class GitManager {
       maxConcurrency: options?.maxConcurrency ?? CHUNK_LIMITS.MAX_CONCURRENT_REQUESTS,
     };
   }
+
+  /**
+   * Check if there is an upstream branch configured
+   */
+  async hasUpstream(): Promise<boolean> {
+    try {
+      const { stdout } = await execAsync('git rev-parse --abbrev-ref --symbolic-full-name @{u}');
+      return stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Push commits to remote repository
+   */
+  async pushToRemote(setUpstream = false): Promise<void> {
+    try {
+      const hasUpstreamBranch = await this.hasUpstream();
+      
+      if (!hasUpstreamBranch && setUpstream) {
+        const currentBranch = await this.getCurrentBranch();
+        await execAsync(`git push --set-upstream origin ${currentBranch}`);
+      } else {
+        await execAsync('git push');
+      }
+    } catch (error) {
+      throw new GitError(
+        'Failed to push to remote repository',
+        error as Error
+      );
+    }
+  }
+
+  /**
+   * Check if there are unpushed commits
+   */
+  async hasUnpushedCommits(): Promise<boolean> {
+    try {
+      const hasUpstreamBranch = await this.hasUpstream();
+      if (!hasUpstreamBranch) {
+        // If no upstream, consider commits as unpushed
+        return true;
+      }
+      
+      const { stdout } = await execAsync('git rev-list --count @{u}..HEAD');
+      return parseInt(stdout.trim()) > 0;
+    } catch {
+      return false;
+    }
+  }
 }
 
 // Singleton instance

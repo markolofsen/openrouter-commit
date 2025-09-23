@@ -32,7 +32,7 @@
     "format:check": "prettier --check src/**/*.ts",
     "prepublishOnly": "npm run build",
     "clean": "rimraf dist",
-    "commit": "clear && git add . && orc commit"
+    "commit": "git add . && orc commit"
   },
   "files": [
     "dist/**/*",

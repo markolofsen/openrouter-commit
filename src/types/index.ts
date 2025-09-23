@@ -104,6 +104,9 @@ export interface CliOptions {
   // Caching options
   readonly noCache?: boolean;
   readonly clearCache?: boolean;
+  // Git push options
+  readonly push?: boolean;
+  readonly autoPush?: boolean;
 }
 
 export type CommitType = 'feat' | 'fix' | 'docs' | 'style' | 'refactor' | 'test' | 'chore' | 'perf' | 'ci' | 'build' | 'revert';
