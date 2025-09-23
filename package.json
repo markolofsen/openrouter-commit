@@ -31,7 +31,8 @@
     "format": "prettier --write src/**/*.ts",
     "format:check": "prettier --check src/**/*.ts",
     "prepublishOnly": "npm run build",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "commit": "clear && git add . && orc commit"
   },
   "files": [
     "dist/**/*",
