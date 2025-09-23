@@ -160,33 +160,55 @@ export class Logger {
 
 export class ProgressIndicator {
   private interval?: NodeJS.Timeout | undefined;
+  private timeoutId?: NodeJS.Timeout | undefined;
   private frame = 0;
   private readonly frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  private startTime: number;
+  private readonly minDuration = 500; // Wait before showing spinner
+  private readonly maxDuration = 30000; // 30 second timeout
+  private isActive = false;
 
   constructor(
     private readonly message: string,
     private readonly silent: boolean
   ) {
+    this.startTime = Date.now();
     if (!this.silent) {
-      this.start();
+      // Show immediate status without spinner for fast operations
+      process.stdout.write(`⏳ ${this.message}`);
+      
+      // Show spinner only if operation takes longer than minDuration
+      this.timeoutId = setTimeout(() => {
+        if (!this.isActive) {
+          this.start();
+        }
+      }, this.minDuration);
+
+      // Auto-timeout after maxDuration
+      setTimeout(() => {
+        if (this.interval) {
+          this.fail('Operation timed out');
+        }
+      }, this.maxDuration);
     }
   }
 
   private start(): void {
-    process.stdout.write(`${this.frames[0]} ${this.message}`);
+    if (this.interval || this.isActive) return;
+    
+    this.isActive = true;
+    process.stdout.write('\r\x1b[K'); // Clear current line
+    process.stdout.write(`${chalk.cyan(this.frames[0])} ${this.message}`);
     
     this.interval = setInterval(() => {
-      process.stdout.write('\r\x1b[K'); // Clear current line
+      process.stdout.write('\r\x1b[K');
       this.frame = (this.frame + 1) % this.frames.length;
       process.stdout.write(`${chalk.cyan(this.frames[this.frame])} ${this.message}`);
-    }, 100);
+    }, 200); // Even slower for elegance
   }
 
   stop(finalMessage?: string): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = undefined;
-    }
+    this.cleanup();
     
     if (!this.silent) {
       process.stdout.write('\r\x1b[K'); // Clear current line
@@ -197,11 +219,27 @@ export class ProgressIndicator {
   }
 
   succeed(message?: string): void {
-    this.stop(message ? `${chalk.green('✓')} ${message}` : `${chalk.green('✓')} ${this.message}`);
+    const duration = Date.now() - this.startTime;
+    const durationText = duration > 1000 ? ` (${(duration / 1000).toFixed(1)}s)` : '';
+    const finalMessage = message || this.message;
+    this.stop(`${chalk.green('✓')} ${finalMessage}${chalk.gray(durationText)}`);
   }
 
   fail(message?: string): void {
-    this.stop(message ? `${chalk.red('✗')} ${message}` : `${chalk.red('✗')} ${this.message}`);
+    const finalMessage = message || `${this.message} failed`;
+    this.stop(`${chalk.red('✗')} ${finalMessage}`);
+  }
+
+  private cleanup(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = undefined;
+    }
+    if (this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = undefined;
+    }
+    this.isActive = false;
   }
 
   update(message: string): void {

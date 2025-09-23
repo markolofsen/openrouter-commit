@@ -17,6 +17,8 @@ import { logger, ProgressIndicator } from './logger.js';
 import { tokenManager } from './tokenizer.js';
 import { cacheManager } from './cache.js';
 import { diffFilter } from './diff-filter.js';
+import { confirm, isCancel } from '@clack/prompts';
+import chalk from 'chalk';
 
 export class CoreOrchestrator {
   private config?: Config;
@@ -61,8 +63,10 @@ export class CoreOrchestrator {
         cacheProgress.succeed('Cache cleared');
       }
 
-      // Get staged changes
-      const progress = contextualLogger.startProgress('Analyzing staged changes...');
+      // Phase 1: Get staged changes
+      console.log(chalk.blue('\n🔍 Analyzing changes...'));
+      const analyzeProgress = contextualLogger.startProgress('Reading staged changes');
+      
       const rawDiff = await gitManager.getStagedDiff({
         maxChunkSize: CHUNK_LIMITS.MAX_CHUNK_SIZE,
         preserveContext: true,
@@ -70,13 +74,15 @@ export class CoreOrchestrator {
       });
 
       if (rawDiff.files.length === 0) {
-        progress.stop();
-        contextualLogger.warn('No staged changes found. Use `git add` to stage files first.');
+        analyzeProgress.fail('No staged changes found');
+        contextualLogger.warn('Use `git add` to stage files first.');
         return;
       }
 
-      // Filter diff based on options
-      progress.update('Filtering and analyzing changes...');
+      analyzeProgress.succeed(`Found ${rawDiff.files.length} staged files`);
+
+      // Phase 2: Filter and process
+      const filterProgress = contextualLogger.startProgress('Processing and filtering changes');
       let diff = diffFilter.filterDiff(rawDiff, {
         ignoreGenerated: options.ignoreGenerated,
         ignoreWhitespace: options.ignoreWhitespace,
@@ -94,18 +100,22 @@ export class CoreOrchestrator {
       }
 
       if (diff.files.length === 0) {
-        progress.stop();
-        contextualLogger.warn('No relevant changes found after filtering.');
+        filterProgress.fail('No relevant changes found');
+        contextualLogger.warn('All changes were filtered out. Try adjusting filter settings.');
         return;
       }
 
       const filterSummary = diffFilter.getFilteringSummary(rawDiff, diff);
-      progress.update(`Found ${diff.files.length} files (${filterSummary.filesRemoved} filtered out)`);
-      progress.succeed(`Analyzed ${diff.files.length} relevant files`);
+      filterProgress.succeed(`Ready to analyze ${diff.files.length} files`);
+      
+      if (filterSummary.filesRemoved > 0) {
+        contextualLogger.debug(`Filtered out ${filterSummary.filesRemoved} irrelevant files`);
+      }
 
-      // Determine provider
+      // Phase 3: Generate commit message  
+      console.log(chalk.blue('\n🤖 Generating commit message...'));
       const provider = options.provider || this.config.preferences.defaultProvider;
-      contextualLogger.info(`Using ${provider} for commit generation`);
+      contextualLogger.debug(`Using ${provider} provider`);
 
       // Initialize API client
       apiManager.initializeProvider(provider, this.config);
@@ -114,8 +124,10 @@ export class CoreOrchestrator {
       const commitMessage = await this.generateCommitMessage(diff, options, provider);
 
       if (options.dryRun) {
-        contextualLogger.info('Generated commit message (dry run):');
-        console.log('\n' + commitMessage + '\n');
+        console.log(chalk.blue('\n📝 Generated commit message (dry run):'));
+        console.log(chalk.gray('——————————————————'));
+        console.log(commitMessage);
+        console.log(chalk.gray('——————————————————\n'));
         return;
       }
 
@@ -123,26 +135,43 @@ export class CoreOrchestrator {
       const shouldCommit = await this.confirmCommit(commitMessage, options);
       
       if (shouldCommit) {
-        const commitProgress = contextualLogger.startProgress('Creating commit...');
+        console.log(chalk.blue('\n💾 Creating commit...'));
+        const commitProgress = contextualLogger.startProgress('Committing changes');
         await gitManager.createCommit(commitMessage);
-        commitProgress.succeed('Commit created successfully!');
+        commitProgress.succeed('Commit created');
         
-        contextualLogger.success(`Commit: ${commitMessage}`);
+        console.log(chalk.green('✓ Commit: ') + chalk.white(commitMessage));
 
-        // Check if push is requested or needed
-        if (options.autoPush || (options.push && await this.shouldPush(options))) {
-          const pushProgress = contextualLogger.startProgress('Pushing to remote...');
+        // Phase 4: Handle push
+        if (options.autoPush) {
+          console.log(chalk.blue('\n🚀 Auto-pushing to remote...'));
+          await this.performPush(contextualLogger);
+        } else if (options.push) {
+          console.log(chalk.blue('\n🚀 Pushing to remote...'));
+          await this.performPush(contextualLogger);
+        } else if (!options.yes && await gitManager.hasUnpushedCommits()) {
+          // Ask user if they want to push (only if not in auto mode)
           try {
-            await gitManager.pushToRemote(true); // Set upstream if needed
-            pushProgress.succeed('Pushed to remote successfully!');
-            contextualLogger.success('Changes pushed to remote repository');
+            console.log(''); // Add some space
+            const shouldPush = await confirm({
+              message: 'Do you want to push to remote?'
+            });
+
+            if (isCancel(shouldPush)) {
+              console.log(chalk.yellow('ℹ Push cancelled'));
+            } else if (shouldPush) {
+              console.log(chalk.blue('\n🚀 Pushing to remote...'));
+              await this.performPush(contextualLogger);
+            } else {
+              console.log(chalk.gray('💡 Tip: Use --push to automatically push changes in the future'));
+            }
           } catch (error) {
-            pushProgress.fail('Failed to push to remote');
-            contextualLogger.warn(`Push failed: ${(error as Error).message}`);
+            // If interactive prompts fail (e.g., in CI), skip push
+            console.log(chalk.gray('💡 Tip: Use --push to automatically push changes'));
           }
         } else if (await gitManager.hasUnpushedCommits()) {
-          // Suggest push if there are unpushed commits
-          contextualLogger.info('💡 Tip: Use --push to automatically push changes or --auto-push for future commits');
+          // Just inform about unpushed commits
+          console.log(chalk.gray('💡 Tip: Use --push to automatically push changes'));
         }
       } else {
         contextualLogger.info('Commit cancelled by user');
@@ -510,6 +539,33 @@ Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
       provider, 
       stagedFiles: stagedFiles.length 
     });
+  }
+
+  /**
+   * Perform push operation with proper messaging
+   */
+  private async performPush(contextualLogger: typeof logger): Promise<void> {
+    const hasUpstream = await gitManager.hasUpstream();
+    const currentBranch = await gitManager.getCurrentBranch();
+    
+    const pushMessage = hasUpstream 
+      ? `Pushing to ${currentBranch}`
+      : `Setting upstream and pushing to ${currentBranch}`;
+    
+    const pushProgress = contextualLogger.startProgress(pushMessage);
+    
+    try {
+      await gitManager.pushToRemote(true); // Set upstream if needed
+      const successMessage = hasUpstream 
+        ? `Pushed to ${currentBranch}`
+        : `Upstream set and pushed to ${currentBranch}`;
+      pushProgress.succeed(successMessage);
+      console.log(chalk.green('✓ Changes pushed successfully'));
+    } catch (error) {
+      pushProgress.fail(`Push failed`);
+      console.log(chalk.red(`✗ Error: ${(error as Error).message}`));
+      console.log(chalk.gray('💡 You can try pushing manually: git push'));
+    }
   }
 
   /**
