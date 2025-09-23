@@ -1,0 +1,408 @@
+import { GitDiff, GitFile, GitChunk, GitLine } from '../types/index.js';
+import { logger } from './logger.js';
+
+export interface FilterOptions {
+  ignoreWhitespace?: boolean;
+  ignoreGenerated?: boolean;
+  ignoreFormatterNoise?: boolean;
+  ignoreLockFiles?: boolean;
+  maxFileSize?: number; // in bytes
+  relevancyThreshold?: number; // 0-1, how relevant changes should be
+}
+
+export interface RelevancyScore {
+  file: string;
+  score: number;
+  reasons: string[];
+}
+
+export class DiffFilter {
+  private readonly defaultOptions: Required<FilterOptions> = {
+    ignoreWhitespace: true,
+    ignoreGenerated: true,
+    ignoreFormatterNoise: true,
+    ignoreLockFiles: true,
+    maxFileSize: 1024 * 1024, // 1MB
+    relevancyThreshold: 0.1,
+  };
+
+  // Patterns for generated files
+  private readonly generatedFilePatterns = [
+    /\.lock$/,
+    /package-lock\.json$/,
+    /yarn\.lock$/,
+    /pnpm-lock\.yaml$/,
+    /Gemfile\.lock$/,
+    /composer\.lock$/,
+    /go\.sum$/,
+    /\.generated\./,
+    /dist\/.*$/,
+    /build\/.*$/,
+    /coverage\/.*$/,
+    /node_modules\/.*$/,
+    /\.git\/.*$/,
+    /\.vscode\/.*$/,
+    /\.idea\/.*$/,
+    /\.DS_Store$/,
+    /thumbs\.db$/i,
+    /desktop\.ini$/i,
+    // Code generation patterns
+    /.*\.g\.ts$/, // Generated TypeScript
+    /.*\.g\.dart$/, // Generated Dart
+    /.*_pb2\.py$/, // Protocol buffers
+    /.*\.pb\.go$/, // Protocol buffers Go
+    /.*\.(min|bundle)\.(js|css)$/, // Minified files
+    // Database migrations (usually auto-generated)
+    /.*migrations\/.*\.py$/,
+    /.*migrations\/.*\.sql$/,
+  ];
+
+  // Patterns for formatter/linter changes (low semantic value)
+  private readonly formatterPatterns = [
+    // Whitespace only changes
+    /^\s*$/,
+    /^[\s\t]+$/,
+    // Import sorting
+    /^import\s+/,
+    /^from\s+.*import/,
+    /^using\s+/,
+    /^#include\s+/,
+    // Trailing commas, semicolons
+    /,\s*$/,
+    /;\s*$/,
+    // Quote style changes
+    /^["']/,
+    // Bracket style changes
+    /^[\{\[\(]\s*$/,
+    /^[\}\]\)]\s*$/,
+  ];
+
+  // High-value code patterns
+  private readonly highValuePatterns = [
+    // Function/method definitions
+    /^[\s]*(?:function|def|class|interface|type|const|let|var)\s+/,
+    // Control flow
+    /^[\s]*(?:if|else|for|while|switch|case|try|catch|throw|return)\s+/,
+    // API endpoints
+    /^[\s]*(?:@(?:Get|Post|Put|Delete|Patch)|app\.|router\.)/,
+    // Database operations
+    /^[\s]*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\s+/i,
+    // Error handling
+    /^[\s]*(?:error|throw|catch|except|raise)\s+/i,
+    // Configuration changes
+    /^[\s]*(?:config|settings|env|environment)/i,
+  ];
+
+  /**
+   * Filter diff based on relevancy and noise reduction
+   */
+  filterDiff(diff: GitDiff, options: Partial<FilterOptions> = {}): GitDiff {
+    const opts = { ...this.defaultOptions, ...options };
+    
+    logger.debug('Filtering diff', { 
+      originalFiles: diff.files.length,
+      options: opts 
+    });
+
+    const filteredFiles = diff.files
+      .map(file => this.filterFile(file, opts))
+      .filter((file): file is GitFile => file !== null);
+
+    // Calculate relevancy scores and sort by importance
+    const scoredFiles = this.scoreFiles(filteredFiles);
+    const relevantFiles = scoredFiles
+      .filter(scored => scored.score >= opts.relevancyThreshold)
+      .sort((a, b) => b.score - a.score)
+      .map(scored => filteredFiles.find(f => f.path === scored.file)!)
+      .filter(Boolean);
+
+    const filteredDiff: GitDiff = {
+      files: relevantFiles,
+      totalLines: relevantFiles.reduce((sum, file) => 
+        sum + file.chunks.reduce((chunkSum, chunk) => chunkSum + chunk.lines.length, 0), 0
+      ),
+      totalSize: relevantFiles.reduce((sum, file) => 
+        sum + JSON.stringify(file).length, 0
+      ),
+    };
+
+    logger.debug('Diff filtered', {
+      originalFiles: diff.files.length,
+      filteredFiles: filteredDiff.files.length,
+      originalLines: diff.totalLines,
+      filteredLines: filteredDiff.totalLines,
+    });
+
+    return filteredDiff;
+  }
+
+  /**
+   * Filter individual file
+   */
+  private filterFile(file: GitFile, options: Required<FilterOptions>): GitFile | null {
+    // Skip generated files
+    if (options.ignoreGenerated && this.isGeneratedFile(file.path)) {
+      logger.debug('Skipping generated file', { path: file.path });
+      return null;
+    }
+
+    // Skip lock files
+    if (options.ignoreLockFiles && this.isLockFile(file.path)) {
+      logger.debug('Skipping lock file', { path: file.path });
+      return null;
+    }
+
+    // Skip binary files
+    if (file.isBinary) {
+      logger.debug('Skipping binary file', { path: file.path });
+      return null;
+    }
+
+    // Filter chunks
+    const filteredChunks = file.chunks
+      .map(chunk => this.filterChunk(chunk, options))
+      .filter((chunk): chunk is GitChunk => chunk !== null);
+
+    // Skip files with no relevant chunks
+    if (filteredChunks.length === 0) {
+      return null;
+    }
+
+    return {
+      ...file,
+      chunks: filteredChunks,
+    };
+  }
+
+  /**
+   * Filter individual chunk
+   */
+  private filterChunk(chunk: GitChunk, options: Required<FilterOptions>): GitChunk | null {
+    let filteredLines = chunk.lines;
+
+    // Filter whitespace-only changes
+    if (options.ignoreWhitespace) {
+      filteredLines = filteredLines.filter(line => 
+        !this.isWhitespaceOnlyLine(line)
+      );
+    }
+
+    // Filter formatter noise
+    if (options.ignoreFormatterNoise) {
+      filteredLines = filteredLines.filter(line => 
+        !this.isFormatterNoise(line)
+      );
+    }
+
+    // Skip chunk if no meaningful lines remain
+    if (filteredLines.length === 0) {
+      return null;
+    }
+
+    // Skip chunk if only context lines remain
+    const meaningfulLines = filteredLines.filter(line => line.type !== 'context');
+    if (meaningfulLines.length === 0) {
+      return null;
+    }
+
+    return {
+      ...chunk,
+      lines: filteredLines,
+      context: this.generateChunkContext(filteredLines),
+    };
+  }
+
+  /**
+   * Check if file is generated
+   */
+  private isGeneratedFile(path: string): boolean {
+    return this.generatedFilePatterns.some(pattern => pattern.test(path));
+  }
+
+  /**
+   * Check if file is a lock file
+   */
+  private isLockFile(path: string): boolean {
+    const lockPatterns = [
+      /\.lock$/,
+      /package-lock\.json$/,
+      /yarn\.lock$/,
+      /pnpm-lock\.yaml$/,
+      /Gemfile\.lock$/,
+      /composer\.lock$/,
+      /go\.sum$/,
+    ];
+    return lockPatterns.some(pattern => pattern.test(path));
+  }
+
+  /**
+   * Check if line is whitespace-only change
+   */
+  private isWhitespaceOnlyLine(line: GitLine): boolean {
+    if (line.type === 'context') {
+      return false;
+    }
+
+    // Check if line contains only whitespace changes
+    const content = line.content.trim();
+    return content === '' || /^[\s\t]+$/.test(line.content);
+  }
+
+  /**
+   * Check if line is formatter noise
+   */
+  private isFormatterNoise(line: GitLine): boolean {
+    if (line.type === 'context') {
+      return false;
+    }
+
+    const content = line.content.trim();
+    return this.formatterPatterns.some(pattern => pattern.test(content));
+  }
+
+  /**
+   * Score files by relevancy
+   */
+  private scoreFiles(files: GitFile[]): RelevancyScore[] {
+    return files.map(file => {
+      let score = 0;
+      const reasons: string[] = [];
+
+      // Base score for any changes
+      score += 0.1;
+
+      // Score based on file type
+      const fileTypeScore = this.getFileTypeScore(file.path);
+      score += fileTypeScore.score;
+      if (fileTypeScore.reason) {
+        reasons.push(fileTypeScore.reason);
+      }
+
+      // Score based on change patterns
+      for (const chunk of file.chunks) {
+        for (const line of chunk.lines) {
+          if (line.type === 'context') continue;
+
+          // High-value patterns
+          if (this.highValuePatterns.some(pattern => pattern.test(line.content))) {
+            score += 0.3;
+            reasons.push('High-value code pattern');
+            break; // Only count once per chunk
+          }
+
+          // Error handling
+          if (/error|exception|catch|throw/i.test(line.content)) {
+            score += 0.2;
+            reasons.push('Error handling');
+          }
+
+          // Security-related
+          if (/password|token|key|auth|security/i.test(line.content)) {
+            score += 0.2;
+            reasons.push('Security-related');
+          }
+
+          // Performance-related
+          if (/performance|optimize|cache|memory|cpu/i.test(line.content)) {
+            score += 0.15;
+            reasons.push('Performance-related');
+          }
+
+          // Bug fixes
+          if (/fix|bug|issue|problem|resolve/i.test(line.content)) {
+            score += 0.2;
+            reasons.push('Bug fix');
+          }
+        }
+      }
+
+      // Penalize very large files (might be auto-generated)
+      const lineCount = file.chunks.reduce((sum, chunk) => sum + chunk.lines.length, 0);
+      if (lineCount > 500) {
+        score *= 0.7;
+        reasons.push('Large file penalty');
+      }
+
+      return {
+        file: file.path,
+        score: Math.min(score, 1.0), // Cap at 1.0
+        reasons,
+      };
+    });
+  }
+
+  /**
+   * Get relevancy score based on file type
+   */
+  private getFileTypeScore(path: string): { score: number; reason?: string } {
+    const fileTypeScores: Array<{ pattern: RegExp; score: number; reason: string }> = [
+      { pattern: /\.(ts|tsx|js|jsx)$/, score: 0.4, reason: 'TypeScript/JavaScript source' },
+      { pattern: /\.(py|rb|php|java|cs|cpp|cc|c|h)$/, score: 0.4, reason: 'Source code' },
+      { pattern: /\.(go|rs|kt|swift|scala)$/, score: 0.4, reason: 'Source code' },
+      { pattern: /\.(vue|svelte|react)$/, score: 0.35, reason: 'Component file' },
+      { pattern: /\.(sql|prisma|graphql)$/, score: 0.3, reason: 'Database/API schema' },
+      { pattern: /\.(yaml|yml|json|toml|ini)$/, score: 0.25, reason: 'Configuration' },
+      { pattern: /\.(md|rst|txt)$/, score: 0.15, reason: 'Documentation' },
+      { pattern: /\.(css|scss|less|sass)$/, score: 0.2, reason: 'Styling' },
+      { pattern: /\.(html|htm|xml)$/, score: 0.2, reason: 'Markup' },
+      { pattern: /Dockerfile|\.dockerignore/, score: 0.25, reason: 'Docker configuration' },
+      { pattern: /package\.json|requirements\.txt|Cargo\.toml/, score: 0.3, reason: 'Dependencies' },
+      { pattern: /\.env|\.env\./, score: 0.35, reason: 'Environment configuration' },
+    ];
+
+    for (const { pattern, score, reason } of fileTypeScores) {
+      if (pattern.test(path)) {
+        return { score, reason };
+      }
+    }
+
+    return { score: 0.1 }; // Default for unknown file types
+  }
+
+  /**
+   * Generate context for filtered chunk
+   */
+  private generateChunkContext(lines: GitLine[]): string {
+    // Get context from meaningful changes
+    const meaningfulLines = lines
+      .filter(line => line.type !== 'context')
+      .slice(0, 3)
+      .map(line => line.content.trim())
+      .filter(content => content.length > 0);
+
+    return meaningfulLines.join(' | ');
+  }
+
+  /**
+   * Get summary of filtering actions
+   */
+  getFilteringSummary(original: GitDiff, filtered: GitDiff): {
+    filesRemoved: number;
+    linesRemoved: number;
+    sizeReduction: string;
+    topRemovedReasons: string[];
+  } {
+    const filesRemoved = original.files.length - filtered.files.length;
+    const linesRemoved = original.totalLines - filtered.totalLines;
+    const sizeReduction = `${Math.round((1 - filtered.totalSize / original.totalSize) * 100)}%`;
+
+    // This is a simplified version - in practice, you'd track reasons during filtering
+    const topRemovedReasons = [
+      'Generated files',
+      'Lock files',
+      'Whitespace changes',
+      'Formatter noise',
+      'Low relevancy score',
+    ];
+
+    return {
+      filesRemoved,
+      linesRemoved,
+      sizeReduction,
+      topRemovedReasons,
+    };
+  }
+}
+
+// Singleton instance
+export const diffFilter = new DiffFilter();
