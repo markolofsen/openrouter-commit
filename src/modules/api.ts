@@ -293,15 +293,36 @@ export class ApiManager {
     message = message.replace(/^["']|["']$/g, ''); // Remove surrounding quotes
     message = message.replace(/^\*\s*/, ''); // Remove leading asterisk
     
+    // Clean up any markdown formatting that might have been added
+    message = message.replace(/^```[\s\S]*?\n/, ''); // Remove opening code blocks
+    message = message.replace(/\n```[\s\S]*?$/, ''); // Remove closing code blocks
+    message = message.replace(/^`|`$/g, ''); // Remove surrounding backticks
+    
+    // Normalize line endings and remove excessive whitespace
+    message = message.replace(/\r\n/g, '\n'); // Normalize line endings
+    message = message.replace(/\n{3,}/g, '\n\n'); // Limit consecutive newlines
+    message = message.trim();
+    
     // Ensure it's not empty
     if (!message || message.length < 3) {
       throw new ApiError(`Generated commit message too short from ${provider}: "${message}"`);
     }
 
     // Limit length (conventional commits should be concise)
-    if (message.length > 200) {
+    if (message.length > 500) {
       logger.warn(`Commit message truncated (was ${message.length} characters)`);
-      message = message.substring(0, 197) + '...';
+      // Try to preserve the first line (subject) and truncate the body
+      const lines = message.split('\n');
+      const subject = lines[0] || '';
+      if (subject.length > 200) {
+        message = subject.substring(0, 197) + '...';
+      } else {
+        const remainingLength = 497 - subject.length;
+        const body = lines.slice(1).join('\n');
+        if (body.length > remainingLength) {
+          message = subject + '\n\n' + body.substring(0, remainingLength - 3) + '...';
+        }
+      }
     }
 
     return message;

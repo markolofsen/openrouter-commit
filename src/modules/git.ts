@@ -75,7 +75,14 @@ export class GitManager {
    */
   async createCommit(message: string): Promise<string> {
     try {
-      const { stdout } = await execAsync(`git commit -m "${message.replace(/"/g, '\\"')}"`);
+      // Properly escape the message for shell execution
+      const escapedMessage = message
+        .replace(/\\/g, '\\\\')  // Escape backslashes first
+        .replace(/"/g, '\\"')    // Escape double quotes
+        .replace(/`/g, '\\`')    // Escape backticks
+        .replace(/\$/g, '\\$');  // Escape dollar signs
+      
+      const { stdout } = await execAsync(`git commit -m "${escapedMessage}"`);
       logger.debug('Commit created successfully', { output: stdout });
       return stdout;
     } catch (error) {

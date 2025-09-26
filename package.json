@@ -1,6 +1,6 @@
 {
   "name": "orcommit",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Efficient CLI tool for generating commit messages using OpenRouter and OpenAI APIs with chunked processing for large files",
   "keywords": [
     "git",

@@ -55,6 +55,23 @@ export class DiffFilter {
     // Database migrations (usually auto-generated)
     /.*migrations\/.*\.py$/,
     /.*migrations\/.*\.sql$/,
+    // Binary and archive files
+    /.*\.(zip|rar|7z|tar|gz|bz2|xz)$/i,
+    /.*\.(exe|dll|so|dylib|app)$/i,
+    /.*\.(jpg|jpeg|png|gif|bmp|ico|svg|webp|tiff)$/i,
+    /.*\.(mp3|mp4|avi|mov|wmv|flv|webm|ogg|wav)$/i,
+    /.*\.(pdf|doc|docx|xls|xlsx|ppt|pptx)$/i,
+    /.*\.(bin|dat|db|sqlite|sqlite3)$/i,
+    /.*\.woff2?$/i,
+    /.*\.ttf$/i,
+    /.*\.eot$/i,
+    // Compiled/cached files
+    /.*\.__pycache__\/.*$/,
+    /.*\.pyc$/,
+    /.*\.pyo$/,
+    /.*\.class$/,
+    /.*\.o$/,
+    /.*\.obj$/,
   ];
 
   // Patterns for formatter/linter changes (low semantic value)
@@ -152,8 +169,8 @@ export class DiffFilter {
       return null;
     }
 
-    // Skip binary files
-    if (file.isBinary) {
+    // Skip binary files (both git-detected and pattern-based)
+    if (file.isBinary || this.isBinaryFile(file.path)) {
       logger.debug('Skipping binary file', { path: file.path });
       return null;
     }
@@ -233,6 +250,31 @@ export class DiffFilter {
       /go\.sum$/,
     ];
     return lockPatterns.some(pattern => pattern.test(path));
+  }
+
+  /**
+   * Check if file is binary based on extension patterns
+   */
+  private isBinaryFile(path: string): boolean {
+    const binaryPatterns = [
+      // Archive files
+      /\.(zip|rar|7z|tar|gz|bz2|xz)$/i,
+      // Executable files
+      /\.(exe|dll|so|dylib|app)$/i,
+      // Image files
+      /\.(jpg|jpeg|png|gif|bmp|ico|webp|tiff)$/i,
+      // Media files
+      /\.(mp3|mp4|avi|mov|wmv|flv|webm|ogg|wav)$/i,
+      // Document files
+      /\.(pdf|doc|docx|xls|xlsx|ppt|pptx)$/i,
+      // Database files
+      /\.(bin|dat|db|sqlite|sqlite3)$/i,
+      // Font files
+      /\.(woff2?|ttf|eot)$/i,
+      // Compiled files
+      /\.(pyc|pyo|class|o|obj)$/i,
+    ];
+    return binaryPatterns.some(pattern => pattern.test(path));
   }
 
   /**
