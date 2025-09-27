@@ -170,6 +170,14 @@ export interface ChunkProcessingOptions {
   readonly maxConcurrency: number;
 }
 
+export interface FileSafetyAnalysis {
+  readonly totalFiles: number;
+  readonly largeFiles: number;
+  readonly suspiciousPatterns: string[];
+  readonly riskLevel: 'safe' | 'warning' | 'critical' | 'dangerous';
+  readonly recommendations: string[];
+}
+
 // Constants
 export const DEFAULT_CONFIG: Readonly<Config> = {
   providers: {
@@ -204,4 +212,15 @@ export const RETRY_CONFIG = {
   BASE_DELAY: 1000, // ms
   MAX_DELAY: 30000, // ms
   BACKOFF_FACTOR: 2,
+} as const;
+
+export const FILE_SAFETY_LIMITS = {
+  // Warning threshold - show warning but allow to continue
+  WARNING_FILE_COUNT: 50,
+  // Critical threshold - require explicit confirmation
+  CRITICAL_FILE_COUNT: 200,
+  // Maximum allowed files without override
+  MAX_FILE_COUNT: 1000,
+  // Large file size threshold (in bytes)
+  LARGE_FILE_SIZE: 1024 * 1024, // 1MB
 } as const;

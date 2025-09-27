@@ -60,9 +60,24 @@ export class Logger {
     const formattedMessage = this.formatMessage('error', message);
     console.error(formattedMessage);
     
-    if (error && this.options.verbose) {
-      console.error(chalk.red('Error details:'));
-      console.error(chalk.red(error.stack || error.message));
+    if (error) {
+      // Special handling for common errors
+      if (error.message.includes('maxBuffer length exceeded')) {
+        console.error(chalk.yellow('💡 Tip: Your repository has very large changes. This has been automatically handled.'));
+        console.error(chalk.yellow('   If the issue persists, try staging fewer files at once.'));
+      } else if (error.message.includes('ENOENT')) {
+        console.error(chalk.yellow('💡 Tip: Make sure you are in a git repository and git is installed.'));
+      } else if (error.message.includes('not a git repository')) {
+        console.error(chalk.yellow('💡 Tip: Initialize a git repository with: git init'));
+      }
+      
+      if (this.options.verbose) {
+        console.error(chalk.red('Error details:'));
+        console.error(chalk.red(error.stack || error.message));
+      } else {
+        // Show just the error message in non-verbose mode
+        console.error(chalk.gray(`Error: ${error.message}`));
+      }
     }
   }
 
@@ -104,6 +119,28 @@ export class Logger {
       
       console.log(`${coloredKey}: ${coloredValue}`);
     });
+  }
+
+  /**
+   * Log a warning with helpful tips
+   */
+  tip(message: string, tip: string): void {
+    if (this.options.silent) return;
+    
+    this.warn(message);
+    console.log(chalk.yellow(`💡 Tip: ${tip}`));
+  }
+
+  /**
+   * Log repository statistics
+   */
+  repoStats(stats: { files: number; lines: number; size: string }): void {
+    if (this.options.silent) return;
+    
+    console.log(chalk.blue('📊 Repository Analysis:'));
+    console.log(`   Files changed: ${chalk.cyan(stats.files)}`);
+    console.log(`   Lines changed: ${chalk.cyan(stats.lines)}`);
+    console.log(`   Total size: ${chalk.cyan(stats.size)}`);
   }
 
   /**

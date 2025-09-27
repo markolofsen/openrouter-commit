@@ -1,9 +1,14 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { GitDiff, GitFile, GitChunk, GitLine, GitError, GitFileStatus, ChunkProcessingOptions, CHUNK_LIMITS } from '../types/index.js';
+import { GitDiff, GitFile, GitChunk, GitLine, GitError, GitFileStatus, ChunkProcessingOptions, CHUNK_LIMITS, FileSafetyAnalysis, FILE_SAFETY_LIMITS } from '../types/index.js';
 import { logger } from './logger.js';
 
+// Increase buffer size for large repositories (200MB)
 const execAsync = promisify(exec);
+const EXEC_OPTIONS = {
+  maxBuffer: 200 * 1024 * 1024, // 200MB buffer
+  timeout: 120000, // 120 seconds timeout
+};
 
 export class GitManager {
   /**
@@ -11,7 +16,7 @@ export class GitManager {
    */
   async isGitRepository(): Promise<boolean> {
     try {
-      await execAsync('git rev-parse --git-dir');
+      await execAsync('git rev-parse --git-dir', EXEC_OPTIONS);
       return true;
     } catch {
       return false;
@@ -26,14 +31,15 @@ export class GitManager {
     
     try {
       // Check if there are staged changes
-      const { stdout: statusOutput } = await execAsync('git diff --cached --name-status');
+      const { stdout: statusOutput } = await execAsync('git diff --cached --name-status', EXEC_OPTIONS);
       if (!statusOutput.trim()) {
         return { files: [], totalLines: 0, totalSize: 0 };
       }
 
       // Get the raw diff with optimized flags
       const { stdout: diffOutput } = await execAsync(
-        'git diff --cached --ignore-space-change --ignore-blank-lines --no-color --no-prefix'
+        'git diff --cached --ignore-space-change --ignore-blank-lines --no-color --no-prefix',
+        EXEC_OPTIONS
       );
 
       return this.parseDiff(diffOutput, mergedOptions);
@@ -50,7 +56,7 @@ export class GitManager {
    */
   async getStagedFiles(): Promise<Array<{ path: string; status: GitFileStatus }>> {
     try {
-      const { stdout } = await execAsync('git diff --cached --name-status');
+      const { stdout } = await execAsync('git diff --cached --name-status', EXEC_OPTIONS);
       
       return stdout
         .trim()
@@ -82,7 +88,7 @@ export class GitManager {
         .replace(/`/g, '\\`')    // Escape backticks
         .replace(/\$/g, '\\$');  // Escape dollar signs
       
-      const { stdout } = await execAsync(`git commit -m "${escapedMessage}"`);
+      const { stdout } = await execAsync(`git commit -m "${escapedMessage}"`, EXEC_OPTIONS);
       logger.debug('Commit created successfully', { output: stdout });
       return stdout;
     } catch (error) {
@@ -98,7 +104,7 @@ export class GitManager {
    */
   async hasUncommittedChanges(): Promise<boolean> {
     try {
-      const { stdout } = await execAsync('git status --porcelain');
+      const { stdout } = await execAsync('git status --porcelain', EXEC_OPTIONS);
       return stdout.trim().length > 0;
     } catch (error) {
       throw new GitError(
@@ -113,7 +119,7 @@ export class GitManager {
    */
   async getCurrentBranch(): Promise<string> {
     try {
-      const { stdout } = await execAsync('git branch --show-current');
+      const { stdout } = await execAsync('git branch --show-current', EXEC_OPTIONS);
       return stdout.trim();
     } catch (error) {
       throw new GitError(
@@ -128,7 +134,7 @@ export class GitManager {
    */
   async getRepositoryRoot(): Promise<string> {
     try {
-      const { stdout } = await execAsync('git rev-parse --show-toplevel');
+      const { stdout } = await execAsync('git rev-parse --show-toplevel', EXEC_OPTIONS);
       return stdout.trim();
     } catch (error) {
       throw new GitError(
@@ -381,7 +387,7 @@ export class GitManager {
    */
   async hasUpstream(): Promise<boolean> {
     try {
-      const { stdout } = await execAsync('git rev-parse --abbrev-ref --symbolic-full-name @{u}');
+      const { stdout } = await execAsync('git rev-parse --abbrev-ref --symbolic-full-name @{u}', EXEC_OPTIONS);
       return stdout.trim().length > 0;
     } catch {
       return false;
@@ -397,9 +403,9 @@ export class GitManager {
       
       if (!hasUpstreamBranch && setUpstream) {
         const currentBranch = await this.getCurrentBranch();
-        await execAsync(`git push --set-upstream origin ${currentBranch}`);
+        await execAsync(`git push --set-upstream origin ${currentBranch}`, EXEC_OPTIONS);
       } else {
-        await execAsync('git push');
+        await execAsync('git push', EXEC_OPTIONS);
       }
     } catch (error) {
       throw new GitError(
@@ -420,11 +426,215 @@ export class GitManager {
         return true;
       }
       
-      const { stdout } = await execAsync('git rev-list --count @{u}..HEAD');
+      const { stdout } = await execAsync('git rev-list --count @{u}..HEAD', EXEC_OPTIONS);
       return parseInt(stdout.trim()) > 0;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Analyze staged files for potential safety issues
+   */
+  async analyzeStagedFilesSafety(): Promise<FileSafetyAnalysis> {
+    try {
+      const stagedFiles = await this.getStagedFiles();
+      const totalFiles = stagedFiles.length;
+      
+      // Get file sizes and analyze patterns
+      const { stdout: filesWithSizes } = await execAsync(
+        'git diff --cached --numstat', 
+        EXEC_OPTIONS
+      );
+      
+      const suspiciousPatterns: string[] = [];
+      let largeFiles = 0;
+      
+      // Analyze file patterns and sizes
+      const lines = filesWithSizes.trim().split('\n').filter(line => line.trim());
+      for (const line of lines) {
+        const parts = line.split('\t');
+        if (parts.length >= 3) {
+          const added = parseInt(parts[0] || '0');
+          const removed = parseInt(parts[1] || '0');
+          const filePath = parts[2] || '';
+          
+          // Check for large files (many lines added)
+          if (added > 1000 || removed > 1000) {
+            largeFiles++;
+          }
+          
+          // Check for suspicious patterns
+          this.checkSuspiciousPatterns(filePath, suspiciousPatterns);
+        }
+      }
+      
+      // Determine risk level
+      const riskLevel = this.determineRiskLevel(totalFiles, largeFiles, suspiciousPatterns);
+      
+      // Generate recommendations
+      const recommendations = this.generateSafetyRecommendations(
+        totalFiles, 
+        largeFiles, 
+        suspiciousPatterns, 
+        riskLevel
+      );
+      
+      return {
+        totalFiles,
+        largeFiles,
+        suspiciousPatterns,
+        riskLevel,
+        recommendations,
+      };
+      
+    } catch (error) {
+      logger.debug('Failed to analyze file safety', error);
+      // Return safe analysis if we can't determine
+      return {
+        totalFiles: 0,
+        largeFiles: 0,
+        suspiciousPatterns: [],
+        riskLevel: 'safe',
+        recommendations: [],
+      };
+    }
+  }
+
+  private checkSuspiciousPatterns(filePath: string, patterns: string[]): void {
+    const suspiciousIndicators = [
+      // Package managers
+      { pattern: /node_modules\//, message: 'node_modules directory detected' },
+      { pattern: /\.pnpm-store\//, message: 'pnpm store directory detected' },
+      { pattern: /bower_components\//, message: 'bower_components directory detected' },
+      { pattern: /vendor\//, message: 'vendor directory detected' },
+      
+      // Build artifacts
+      { pattern: /dist\/.*\.(js|css|map)$/, message: 'build artifacts detected' },
+      { pattern: /build\/.*\.(js|css|map)$/, message: 'build output detected' },
+      { pattern: /\.next\//, message: 'Next.js build directory detected' },
+      { pattern: /\.nuxt\//, message: 'Nuxt.js build directory detected' },
+      
+      // Cache directories
+      { pattern: /\.cache\//, message: 'cache directory detected' },
+      { pattern: /tmp\//, message: 'temporary directory detected' },
+      { pattern: /temp\//, message: 'temporary directory detected' },
+      
+      // IDE and system files
+      { pattern: /\.vscode\//, message: 'VS Code settings detected' },
+      { pattern: /\.idea\//, message: 'IntelliJ IDEA settings detected' },
+      { pattern: /\.DS_Store$/, message: 'macOS system files detected' },
+      { pattern: /Thumbs\.db$/, message: 'Windows system files detected' },
+      
+      // Logs and databases
+      { pattern: /\.log$/, message: 'log files detected' },
+      { pattern: /\.sqlite$/, message: 'SQLite database files detected' },
+      { pattern: /\.db$/, message: 'database files detected' },
+      
+      // Large binary files
+      { pattern: /\.(zip|tar|gz|rar|7z)$/, message: 'archive files detected' },
+      { pattern: /\.(mp4|avi|mov|mkv)$/, message: 'video files detected' },
+      { pattern: /\.(jpg|jpeg|png|gif|bmp)$/, message: 'large image files detected' },
+      
+      // Environment and secrets
+      { pattern: /\.env\.local$/, message: 'local environment files detected' },
+      { pattern: /\.env\.production$/, message: 'production environment files detected' },
+      { pattern: /secrets?\//, message: 'secrets directory detected' },
+    ];
+    
+    for (const indicator of suspiciousIndicators) {
+      if (indicator.pattern.test(filePath) && !patterns.includes(indicator.message)) {
+        patterns.push(indicator.message);
+      }
+    }
+  }
+
+  private determineRiskLevel(
+    totalFiles: number, 
+    largeFiles: number, 
+    suspiciousPatterns: string[]
+  ): 'safe' | 'warning' | 'critical' | 'dangerous' {
+    // Dangerous: Too many files or clear signs of package directories
+    if (totalFiles > FILE_SAFETY_LIMITS.MAX_FILE_COUNT) {
+      return 'dangerous';
+    }
+    
+    const hasPackageManagerFiles = suspiciousPatterns.some(pattern => 
+      pattern.includes('node_modules') || 
+      pattern.includes('vendor') || 
+      pattern.includes('bower_components')
+    );
+    
+    if (hasPackageManagerFiles) {
+      return 'dangerous';
+    }
+    
+    // Critical: Many files or multiple suspicious patterns
+    if (totalFiles > FILE_SAFETY_LIMITS.CRITICAL_FILE_COUNT || 
+        suspiciousPatterns.length > 3 || 
+        largeFiles > 10) {
+      return 'critical';
+    }
+    
+    // Warning: Moderate number of files or some suspicious patterns
+    if (totalFiles > FILE_SAFETY_LIMITS.WARNING_FILE_COUNT || 
+        suspiciousPatterns.length > 0 || 
+        largeFiles > 3) {
+      return 'warning';
+    }
+    
+    return 'safe';
+  }
+
+  private generateSafetyRecommendations(
+    totalFiles: number,
+    largeFiles: number,
+    suspiciousPatterns: string[],
+    riskLevel: 'safe' | 'warning' | 'critical' | 'dangerous'
+  ): string[] {
+    const recommendations: string[] = [];
+    
+    if (riskLevel === 'dangerous') {
+      recommendations.push('🚨 STOP: This looks like a dangerous commit!');
+      
+      if (totalFiles > FILE_SAFETY_LIMITS.MAX_FILE_COUNT) {
+        recommendations.push(`Too many files (${totalFiles}). Consider staging files in smaller batches.`);
+      }
+      
+      if (suspiciousPatterns.some(p => p.includes('node_modules'))) {
+        recommendations.push('Remove node_modules from staging: git reset HEAD node_modules/');
+      }
+      
+      if (suspiciousPatterns.some(p => p.includes('vendor'))) {
+        recommendations.push('Remove vendor directory from staging: git reset HEAD vendor/');
+      }
+    }
+    
+    if (riskLevel === 'critical') {
+      recommendations.push('⚠️  Large commit detected - please review carefully');
+      
+      if (totalFiles > FILE_SAFETY_LIMITS.CRITICAL_FILE_COUNT) {
+        recommendations.push(`Consider splitting ${totalFiles} files into multiple commits`);
+      }
+      
+      if (largeFiles > 5) {
+        recommendations.push(`${largeFiles} large files detected - verify they should be committed`);
+      }
+    }
+    
+    if (suspiciousPatterns.length > 0) {
+      recommendations.push('Check your .gitignore file to exclude:');
+      suspiciousPatterns.slice(0, 5).forEach(pattern => {
+        recommendations.push(`  • ${pattern}`);
+      });
+    }
+    
+    if (riskLevel !== 'safe') {
+      recommendations.push('Use "git status" to review what will be committed');
+      recommendations.push('Use "git reset HEAD <file>" to unstage unwanted files');
+    }
+    
+    return recommendations;
   }
 }
 

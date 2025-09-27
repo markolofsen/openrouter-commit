@@ -161,6 +161,12 @@ class CliApplication {
    */
   private async handleCommitCommand(options: CliOptions): Promise<void> {
     try {
+      // Show version info elegantly
+      const globalOptions = this.program.opts();
+      if (!globalOptions.silent) {
+        console.log(chalk.gray(`orc v${packageJson.version}`));
+      }
+      
       logger.debug('Starting commit command', options);
 
       if (options.watch) {

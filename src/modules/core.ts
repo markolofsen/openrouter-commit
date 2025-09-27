@@ -8,7 +8,8 @@ import {
   CHUNK_LIMITS,
   ConfigError,
   GitError,
-  ApiError
+  ApiError,
+  FileSafetyAnalysis
 } from '../types/index.js';
 import { configManager } from './config.js';
 import { gitManager } from './git.js';
@@ -63,9 +64,16 @@ export class CoreOrchestrator {
         cacheProgress.succeed('Cache cleared');
       }
 
-      // Phase 1: Get staged changes
-      console.log(chalk.blue('\n🔍 Analyzing changes...'));
-      const analyzeProgress = contextualLogger.startProgress('Reading staged changes');
+      // Phase 1: Get staged changes (with safety check)
+      const analyzeProgress = contextualLogger.startProgress('Analyzing changes');
+      
+      // Quick safety check first
+      const safetyAnalysis = await gitManager.analyzeStagedFilesSafety();
+      analyzeProgress.update('Checking file safety');
+      
+      await this.handleSafetyCheck(safetyAnalysis, options, contextualLogger, analyzeProgress);
+      
+      analyzeProgress.update('Reading staged changes');
       
       const rawDiff = await gitManager.getStagedDiff({
         maxChunkSize: CHUNK_LIMITS.MAX_CHUNK_SIZE,
@@ -80,6 +88,14 @@ export class CoreOrchestrator {
       }
 
       analyzeProgress.succeed(`Found ${rawDiff.files.length} staged files`);
+      
+      // Show repository statistics
+      const totalSize = (rawDiff.totalSize / 1024).toFixed(1);
+      contextualLogger.repoStats({
+        files: rawDiff.files.length,
+        lines: rawDiff.totalLines,
+        size: `${totalSize} KB`
+      });
 
       // Phase 2: Filter and process
       const filterProgress = contextualLogger.startProgress('Processing and filtering changes');
@@ -179,7 +195,7 @@ export class CoreOrchestrator {
 
     } catch (error) {
       if (error instanceof ConfigError || error instanceof GitError || error instanceof ApiError) {
-        contextualLogger.error(error.message, options.verbose ? error : undefined);
+        contextualLogger.error(error.message, error);
       } else {
         contextualLogger.error(
           `Unexpected error: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -566,6 +582,81 @@ Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
       console.log(chalk.red(`✗ Error: ${(error as Error).message}`));
       console.log(chalk.gray('💡 You can try pushing manually: git push'));
     }
+  }
+
+  /**
+   * Handle safety check for staged files
+   */
+  private async handleSafetyCheck(
+    analysis: FileSafetyAnalysis, 
+    options: CliOptions, 
+    contextualLogger: typeof logger,
+    progress?: ProgressIndicator
+  ): Promise<void> {
+    const { riskLevel, totalFiles, recommendations } = analysis;
+    
+    // Only show messages for non-safe commits
+    if (riskLevel === 'safe') {
+      return; // Silent for safe commits
+    }
+    
+    // Handle dangerous commits - block immediately
+    if (riskLevel === 'dangerous') {
+      if (options.yes) {
+        return; // Silent proceed with --yes
+      }
+      
+      // Stop progress before showing error
+      if (progress) {
+        progress.fail(`Dangerous commit detected (${totalFiles} files)`);
+      }
+      
+      // Show only the most important recommendations
+      const criticalRecs = recommendations.filter(rec => 
+        rec.includes('node_modules') || rec.includes('vendor') || rec.includes('STOP')
+      );
+      if (criticalRecs.length > 0) {
+        criticalRecs.slice(0, 2).forEach(rec => {
+          console.log(chalk.yellow(`   ${rec}`));
+        });
+      }
+      
+      console.log(chalk.gray('Use --yes to override or fix staging area first.\n'));
+      throw new GitError('Dangerous commit blocked for safety');
+    }
+    
+    // Handle critical commits - ask for confirmation
+    if (riskLevel === 'critical') {
+      if (options.yes) {
+        return; // Silent proceed with --yes
+      }
+      
+      // Stop progress before showing dialog
+      if (progress) {
+        progress.stop();
+      }
+      
+      try {
+        const { confirm, isCancel } = await import('@clack/prompts');
+        
+        const shouldProceed = await confirm({
+          message: `Large commit detected (${totalFiles} files). Continue?`,
+          initialValue: false,
+        });
+        
+        if (isCancel(shouldProceed) || !shouldProceed) {
+          throw new GitError('Large commit cancelled by user');
+        }
+        
+      } catch (error) {
+        if (error instanceof GitError) {
+          throw error;
+        }
+        // If interactive prompts fail, proceed silently
+      }
+    }
+    
+    // For warnings, proceed silently
   }
 
   /**
