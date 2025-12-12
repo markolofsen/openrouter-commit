@@ -325,12 +325,14 @@ export class CoreOrchestrator {
         const rawMessage = result.data;
 
         // Parse JSON response (with fallback to plain text)
+        logger.debug('Raw AI response:', { length: rawMessage.length, preview: rawMessage.substring(0, 200) });
         const parsed = parseAIResponse(rawMessage);
+        logger.debug('Parsed response:', { hasAssessment: !!parsed.assessment, messageLength: parsed.commitMessage.length });
 
         spinner.update('Polishing the message');
 
-        // Stage 2: Finalize and clean the commit message part
-        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options);
+        // Stage 2: Finalize and clean the commit message part (with user context)
+        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options, userFeedback);
 
         // Cache the finalized result (skip if regenerating with feedback)
         if (!options.noCache && !userFeedback) {
@@ -377,12 +379,14 @@ export class CoreOrchestrator {
         const rawMessage = this.combineChunkResults(result.data, options);
 
         // Parse JSON response (with fallback to plain text)
+        logger.debug('Raw AI response (chunks):', { length: rawMessage.length, preview: rawMessage.substring(0, 200) });
         const parsed = parseAIResponse(rawMessage);
+        logger.debug('Parsed response (chunks):', { hasAssessment: !!parsed.assessment, messageLength: parsed.commitMessage.length });
 
         spinner.update('Polishing the message');
 
-        // Stage 2: Finalize and clean the commit message part
-        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options);
+        // Stage 2: Finalize and clean the commit message part (with user context)
+        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options, userFeedback);
 
         spinner.succeed('Commit message generated');
         return {
@@ -496,8 +500,8 @@ THINK STEP BY STEP:
 
     // JSON schema for response
     const jsonSchema = `{
-  "codeAssessment": "Brief (1-2 sentences) sarcastic, darkly humorous assessment of the code changes. Be witty and technically insightful. Channel maximum developer cynicism.",
-  "commitMessage": "Professional ${format === 'conventional' ? 'conventional commits format' : 'descriptive'} commit message"
+  "codeAssessment": "Brief (1-2 sentences) sarcastic, darkly humorous assessment of the code changes. Be witty and technically insightful. Channel maximum developer cynicism. ${userFeedback ? 'IMPORTANT: Follow user feedback requirements for language and style!' : `Write in ${language}.`}",
+  "commitMessage": "Professional ${format === 'conventional' ? 'conventional commits format' : 'descriptive'} commit message. ${userFeedback ? 'CRITICAL: Follow ALL user feedback instructions!' : `Write in ${language}.`}"
 }`;
 
     sections.push(wrapInBlock('RESPONSE_SCHEMA', jsonSchema, false));
@@ -505,6 +509,7 @@ THINK STEP BY STEP:
     // Final generation instructions
     const finalInstructions = `GENERATE YOUR RESPONSE AS A VALID JSON OBJECT:
 
+${userFeedback ? '⚠️ CRITICAL: The [IMPORTANT_USER_FEEDBACK] block above contains explicit user requirements. Follow ALL instructions from the user feedback - they override ALL other rules (including language, format, style, etc.).\n' : ''}
 1. CODE ASSESSMENT - Provide a brief (1-2 sentences), brutally honest, darkly humorous take on the code changes
    Examples: "Someone discovered copy-paste today", "WIP commits everywhere, as expected", "Finally fixing that TODO from 2019"
 
@@ -534,14 +539,16 @@ Example output:
   private async finalizeCommitMessage(
     rawMessage: string,
     provider: 'openrouter' | 'openai',
-    options: CliOptions
+    options: CliOptions,
+    userFeedback?: string
   ): Promise<string> {
     const format = this.config!.preferences.commitFormat;
 
     // Create finalization prompt with structured blocks
     const instructions = `You are a commit message quality control expert.
 
-YOUR TASK: Clean and perfect the commit message below. Remove ANY explanatory text, prefixes, or formatting artifacts.`;
+YOUR TASK: Clean and perfect the commit message below. Remove ANY explanatory text, prefixes, or formatting artifacts.
+${userFeedback ? '\n⚠️ CRITICAL: User provided feedback. You MUST preserve the language and style they requested!' : ''}`;
 
     const rules = `1. Output ONLY the final commit message - nothing else
 2. Remove prefixes like "commit message:", "here is", "this is", etc.
@@ -552,7 +559,8 @@ YOUR TASK: Clean and perfect the commit message below. Remove ANY explanatory te
 7. Preserve ${format === 'conventional' ? 'conventional commits format (type(scope): description)' : 'simple format'}
 8. Preserve line breaks for multi-line messages
 9. Ensure subject line is under 72 characters
-10. NO additional text, NO commentary, NO explanations`;
+10. NO additional text, NO commentary, NO explanations
+${userFeedback ? `11. CRITICAL: Preserve the EXACT language used in the message below (user requested specific changes)` : ''}`;
 
     const finalizationPrompt = `${wrapInstructions(instructions)}
 
