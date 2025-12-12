@@ -84,6 +84,7 @@ export function wrapRules(rules: string): string {
 
 /**
  * Parse AI JSON response with fallback to plain text
+ * Handles various response formats: pure JSON, markdown-wrapped, or plain text
  * @param response - AI response (should be JSON)
  * @returns Object with assessment and commitMessage
  */
@@ -91,18 +92,45 @@ export function parseAIResponse(response: string): {
   assessment: string | null;
   commitMessage: string;
 } {
+  let cleanResponse = response.trim();
+
+  // Remove markdown code blocks if present (```json ... ``` or ``` ... ```)
+  const codeBlockMatch = cleanResponse.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    cleanResponse = codeBlockMatch[1].trim();
+  }
+
+  // Remove common prefixes that AI might add
+  cleanResponse = cleanResponse
+    .replace(/^(?:Here is|Here's|This is|The|A)\s+(?:the\s+)?(?:JSON|response|result)?:?\s*/i, '')
+    .trim();
+
   try {
     // Try to parse as JSON
-    const parsed = JSON.parse(response.trim());
+    const parsed = JSON.parse(cleanResponse);
 
-    if (parsed && typeof parsed === 'object') {
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return {
         assessment: parsed.codeAssessment || null,
         commitMessage: parsed.commitMessage || response.trim()
       };
     }
   } catch (error) {
-    // JSON parsing failed - fallback to plain text
+    // JSON parsing failed - try to extract JSON from text
+    const jsonMatch = response.match(/\{[\s\S]*"(?:codeAssessment|commitMessage)"[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            assessment: parsed.codeAssessment || null,
+            commitMessage: parsed.commitMessage || response.trim()
+          };
+        }
+      } catch {
+        // Continue to fallback
+      }
+    }
   }
 
   // Fallback: treat entire response as commit message (backward compatibility)

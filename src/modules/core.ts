@@ -519,13 +519,19 @@ ${userFeedback ? '⚠️ CRITICAL: The [IMPORTANT_USER_FEEDBACK] block above con
    - Add detailed body if changes are complex
    - Include BREAKING CHANGE footer if applicable
 
-CRITICAL: Return ONLY a valid JSON object matching the RESPONSE_SCHEMA above. No markdown, no explanations, no code blocks - just pure JSON.
+CRITICAL: Return ONLY a valid JSON object matching the RESPONSE_SCHEMA above.
+⚠️ DO NOT wrap in markdown code blocks (no \`\`\`json)
+⚠️ DO NOT add explanations before or after
+⚠️ START your response with { and END with }
+⚠️ This is REQUIRED - the response MUST be parseable JSON
 
-Example output:
-{
-  "codeAssessment": "Ah yes, another 'quick fix' that touches 47 files",
-  "commitMessage": "refactor: restructure authentication flow\\n\\nMigrate from session-based to JWT authentication"
-}`;
+CORRECT Example:
+{"codeAssessment": "Ah yes, another 'quick fix' that touches 47 files", "commitMessage": "refactor: restructure authentication flow\\n\\nMigrate from session-based to JWT authentication"}
+
+WRONG Examples:
+- \`\`\`json {"codeAssessment": "..."} \`\`\` ❌
+- Here is the JSON: {...} ❌
+- Just plain text without JSON ❌`;
 
     sections.push(wrapInstructions(finalInstructions));
 
