@@ -16,13 +16,25 @@ export default {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
-  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  globals: {
+    'ts-jest': {
+      useESM: true,
+      tsconfig: {
+        rootDir: '.',
+        outDir: '.jest-cache',
+        skipLibCheck: true,
+        noUncheckedIndexedAccess: false,
+      },
+    },
+  },
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       useESM: true,
     }],
   },
   moduleNameMapper: {
-    '^(\\.{1,2}/.*)\\.js$': '$1'
-  }
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^chalk$': '<rootDir>/tests/__mocks__/chalk.ts'
+  },
+  testTimeout: 10000,
 };

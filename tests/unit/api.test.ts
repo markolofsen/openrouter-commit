@@ -234,6 +234,101 @@ describe('ApiManager', () => {
       expect(result.data).toBe('feat: add new feature');
     });
 
+    it('should clean "this is commit message:" prefix', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: { content: 'This is commit message: fix: resolve authentication bug' },
+            finish_reason: 'stop',
+          },
+        ],
+        model: 'gpt-3.5-turbo',
+      };
+
+      mockAxiosInstance.post.mockResolvedValue({ data: mockResponse });
+
+      const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('fix: resolve authentication bug');
+    });
+
+    it('should clean "here is the commit message:" prefix', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: { content: 'Here is the commit message: refactor: improve code structure' },
+            finish_reason: 'stop',
+          },
+        ],
+        model: 'gpt-3.5-turbo',
+      };
+
+      mockAxiosInstance.post.mockResolvedValue({ data: mockResponse });
+
+      const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('refactor: improve code structure');
+    });
+
+    it('should clean "the commit message is:" prefix', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: { content: 'The commit message is: docs: update README' },
+            finish_reason: 'stop',
+          },
+        ],
+        model: 'gpt-3.5-turbo',
+      };
+
+      mockAxiosInstance.post.mockResolvedValue({ data: mockResponse });
+
+      const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('docs: update README');
+    });
+
+    it('should clean "suggested commit:" prefix', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: { content: 'Suggested commit: chore: update dependencies' },
+            finish_reason: 'stop',
+          },
+        ],
+        model: 'gpt-3.5-turbo',
+      };
+
+      mockAxiosInstance.post.mockResolvedValue({ data: mockResponse });
+
+      const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('chore: update dependencies');
+    });
+
+    it('should clean leading dash and asterisk', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: { content: '- feat: add new API endpoint' },
+            finish_reason: 'stop',
+          },
+        ],
+        model: 'gpt-3.5-turbo',
+      };
+
+      mockAxiosInstance.post.mockResolvedValue({ data: mockResponse });
+
+      const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe('feat: add new API endpoint');
+    });
+
     it('should truncate very long commit messages', async () => {
       const longMessage = 'feat: ' + 'a'.repeat(250); // 255 chars total
       const mockResponse = {

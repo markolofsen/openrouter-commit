@@ -1,16 +1,33 @@
 {
   "name": "orcommit",
   "version": "1.0.4",
-  "description": "Efficient CLI tool for generating commit messages using OpenRouter and OpenAI APIs with chunked processing for large files",
+  "description": "AI-powered commit message generator - Automated git commits using OpenAI, Claude, and OpenRouter APIs with intelligent diff processing, custom prompts, and interactive regeneration",
   "keywords": [
     "git",
     "commit",
     "ai",
     "openrouter",
     "openai",
+    "claude",
+    "anthropic",
     "cli",
     "typescript",
-    "automation"
+    "automation",
+    "git-automation",
+    "commit-message",
+    "ai-commit",
+    "conventional-commits",
+    "gpt",
+    "gpt-4",
+    "developer-tools",
+    "productivity",
+    "git-hooks",
+    "ai-assistant",
+    "code-assistant",
+    "ollama",
+    "local-ai",
+    "multi-provider",
+    "interactive-cli"
   ],
   "main": "dist/index.js",
   "bin": {
@@ -37,7 +54,8 @@
   "files": [
     "dist/**/*",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "preview.png"
   ],
   "engines": {
     "node": ">=16.0.0"
@@ -46,7 +64,26 @@
     "type": "git",
     "url": "git+https://github.com/markolofsen/openrouter-commit.git"
   },
-  "author": "Mark Olofsen",
+  "homepage": "https://reforms.ai",
+  "bugs": {
+    "url": "https://github.com/markolofsen/openrouter-commit/issues",
+    "email": "contact@reforms.ai"
+  },
+  "author": {
+    "name": "Mark Olofsen",
+    "email": "contact@reforms.ai",
+    "url": "https://reforms.ai"
+  },
+  "contributors": [
+    {
+      "name": "Reforms.ai Team",
+      "url": "https://reforms.ai"
+    }
+  ],
+  "funding": {
+    "type": "individual",
+    "url": "https://reforms.ai"
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/jest": "^29.5.8",

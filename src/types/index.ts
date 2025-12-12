@@ -22,6 +22,7 @@ export interface UserPreferences {
   readonly autoConfirm: boolean;
   readonly language: string;
   readonly commitFormat: 'conventional' | 'simple';
+  readonly customPrompt?: string;
 }
 
 // Git-related types
@@ -107,6 +108,9 @@ export interface CliOptions {
   // Git push options
   readonly push?: boolean;
   readonly autoPush?: boolean;
+  // Custom prompt options
+  readonly prompt?: string;
+  readonly context?: string;
 }
 
 export type CommitType = 'feat' | 'fix' | 'docs' | 'style' | 'refactor' | 'test' | 'chore' | 'perf' | 'ci' | 'build' | 'revert';

@@ -18,8 +18,20 @@ import { logger, ProgressIndicator } from './logger.js';
 import { tokenManager } from './tokenizer.js';
 import { cacheManager } from './cache.js';
 import { diffFilter } from './diff-filter.js';
-import { confirm, isCancel } from '@clack/prompts';
+import { maybeShowPromo } from './promo.js';
+import { confirm, isCancel, text } from '@clack/prompts';
 import chalk from 'chalk';
+import {
+  wrapInstructions,
+  wrapRules,
+  wrapContext,
+  wrapUserFeedback,
+  wrapDiffContent,
+  wrapInBlock,
+  cleanText,
+  parseAIResponse
+} from '../utils/formatting.js';
+import { createAIThinkingSpinner, createProcessingSpinner } from './spinner.js';
 
 export class CoreOrchestrator {
   private config?: Config;
@@ -128,66 +140,98 @@ export class CoreOrchestrator {
         contextualLogger.debug(`Filtered out ${filterSummary.filesRemoved} irrelevant files`);
       }
 
-      // Phase 3: Generate commit message  
-      console.log(chalk.blue('\n🤖 Generating commit message...'));
+      // Phase 3: Generate commit message
       const provider = options.provider || this.config.preferences.defaultProvider;
-      contextualLogger.debug(`Using ${provider} provider`);
 
       // Initialize API client
       apiManager.initializeProvider(provider, this.config);
 
-      // Generate commit message
-      const commitMessage = await this.generateCommitMessage(diff, options, provider);
+      // Generate commit message with regeneration loop
+      let commitMessage: string;
+      let codeAssessment: string | null = null;
+      let userFeedback: string | undefined;
+      let regenerationAttempt = 0;
+      const maxRegenerations = 5; // Prevent infinite loops
 
-      if (options.dryRun) {
-        console.log(chalk.blue('\n📝 Generated commit message (dry run):'));
-        console.log(chalk.gray('——————————————————'));
-        console.log(commitMessage);
-        console.log(chalk.gray('——————————————————\n'));
-        return;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // Generate commit message (with optional user feedback)
+        const result = await this.generateCommitMessage(diff, options, provider, userFeedback);
+        commitMessage = result.commitMessage;
+        codeAssessment = result.assessment;
+
+        if (options.dryRun) {
+          console.log(chalk.blue('\n📝 Generated commit message (dry run):'));
+          console.log(chalk.gray('——————————————————'));
+          console.log(commitMessage);
+          console.log(chalk.gray('——————————————————\n'));
+
+          if (userFeedback) {
+            console.log(chalk.yellow(`Regenerated with feedback: ${userFeedback}\n`));
+          }
+
+          return;
+        }
+
+        // Confirm or regenerate
+        const confirmation = await this.confirmCommit(commitMessage, codeAssessment, options);
+
+        if (confirmation.action === 'confirm') {
+          break; // Exit loop and proceed to commit
+        } else if (confirmation.action === 'cancel') {
+          console.log(chalk.yellow('\n✖ Commit cancelled by user'));
+          return;
+        } else if (confirmation.action === 'regenerate') {
+          regenerationAttempt++;
+
+          if (regenerationAttempt >= maxRegenerations) {
+            console.log(chalk.yellow(`\n⚠ Maximum regeneration attempts (${maxRegenerations}) reached`));
+            const forceCommit = await confirm({
+              message: 'Use the last generated message anyway?',
+            });
+
+            if (isCancel(forceCommit) || !forceCommit) {
+              console.log(chalk.yellow('\n✖ Commit cancelled'));
+              return;
+            }
+            break;
+          }
+
+          userFeedback = confirmation.feedback;
+          // Regenerate with user feedback
+          continue;
+        }
       }
 
-      // Confirm or auto-commit
-      const shouldCommit = await this.confirmCommit(commitMessage, options);
-      
-      if (shouldCommit) {
-        console.log(chalk.blue('\n💾 Creating commit...'));
-        const commitProgress = contextualLogger.startProgress('Committing changes');
+      // Create the commit
+      if (commitMessage) {
+        const commitSpinner = createProcessingSpinner('Creating commit');
+        commitSpinner.start();
+
         await gitManager.createCommit(commitMessage);
-        commitProgress.succeed('Commit created');
-        
-        console.log(chalk.green('✓ Commit: ') + chalk.white(commitMessage));
+        commitSpinner.succeed('Commit created');
+
+        console.log(chalk.gray('\n💬 Message: ') + chalk.white(commitMessage));
+
+        // Maybe show promotional message (1% chance)
+        maybeShowPromo();
 
         // Phase 4: Handle push
-        if (options.autoPush) {
-          console.log(chalk.blue('\n🚀 Auto-pushing to remote...'));
-          await this.performPush(contextualLogger);
-        } else if (options.push) {
-          console.log(chalk.blue('\n🚀 Pushing to remote...'));
+        if (options.autoPush || options.push) {
           await this.performPush(contextualLogger);
         } else if (!options.yes && await gitManager.hasUnpushedCommits()) {
           // Ask user if they want to push (only if not in auto mode)
           try {
-            console.log(''); // Add some space
             const shouldPush = await confirm({
-              message: 'Do you want to push to remote?'
+              message: 'Push to remote?'
             });
 
-            if (isCancel(shouldPush)) {
-              console.log(chalk.yellow('ℹ Push cancelled'));
-            } else if (shouldPush) {
-              console.log(chalk.blue('\n🚀 Pushing to remote...'));
+            if (!isCancel(shouldPush) && shouldPush) {
               await this.performPush(contextualLogger);
-            } else {
-              console.log(chalk.gray('💡 Tip: Use --push to automatically push changes in the future'));
             }
           } catch (error) {
-            // If interactive prompts fail (e.g., in CI), skip push
-            console.log(chalk.gray('💡 Tip: Use --push to automatically push changes'));
+            // If interactive prompts fail (e.g., in CI), skip push silently
           }
-        } else if (await gitManager.hasUnpushedCommits()) {
-          // Just inform about unpushed commits
-          console.log(chalk.gray('💡 Tip: Use --push to automatically push changes'));
         }
       } else {
         contextualLogger.info('Commit cancelled by user');
@@ -207,35 +251,47 @@ export class CoreOrchestrator {
   }
 
   /**
-   * Generate commit message from diff
+   * Generate commit message from diff with optional user feedback
    */
   private async generateCommitMessage(
     diff: GitDiff,
     options: CliOptions,
-    provider: 'openrouter' | 'openai'
-  ): Promise<string> {
-    const progress = logger.startProgress('Generating commit message...');
+    provider: 'openrouter' | 'openai',
+    userFeedback?: string
+  ): Promise<{ commitMessage: string; assessment: string | null }> {
+    const spinner = createAIThinkingSpinner(
+      userFeedback ? 'Regenerating commit' : 'Generating commit'
+    );
+    spinner.start();
 
     try {
-      // Create system prompt
-      const systemPrompt = this.createSystemPrompt(options);
+      // Create system prompt (with optional user feedback for regeneration)
+      const systemPrompt = this.createSystemPrompt(options, userFeedback);
+
+      if (userFeedback) {
+        logger.debug('Regenerating with user feedback', { feedbackLength: userFeedback.length });
+      }
       
       // Prepare diff content for processing
-      const diffContent = this.prepareDiffContent(diff);
+      const rawDiffContent = this.prepareDiffContent(diff);
+      const diffContent = wrapDiffContent(rawDiffContent); // Wrap in DIFF_CONTENT block
       const model = this.getModel(provider);
       
-      // Check cache first (unless disabled)
-      if (!options.noCache) {
+      // Check cache first (unless disabled or regenerating with feedback)
+      if (!options.noCache && !userFeedback) {
         const cachedMessage = await cacheManager.get(
-          diffContent,
+          rawDiffContent, // Use raw content for cache key
           model,
           provider,
           this.config!.preferences.temperature
         );
-        
+
         if (cachedMessage) {
-          progress.succeed('Commit message retrieved from cache');
-          return cachedMessage;
+          spinner.succeed('Retrieved from cache');
+          return {
+            commitMessage: cachedMessage,
+            assessment: null // Cached messages don't have assessment
+          };
         }
       }
       
@@ -266,32 +322,43 @@ export class CoreOrchestrator {
           throw new ApiError(result.error?.message || 'Failed to generate commit message');
         }
 
-        // Cache the result
-        if (!options.noCache) {
+        const rawMessage = result.data;
+
+        // Parse JSON response (with fallback to plain text)
+        const parsed = parseAIResponse(rawMessage);
+
+        spinner.update('Polishing the message');
+
+        // Stage 2: Finalize and clean the commit message part
+        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options);
+
+        // Cache the finalized result (skip if regenerating with feedback)
+        if (!options.noCache && !userFeedback) {
           await cacheManager.set(
-            diffContent,
+            rawDiffContent, // Use raw content for cache key
             model,
             provider,
             this.config!.preferences.temperature,
-            result.data
+            finalMessage
           );
         }
 
-        progress.succeed('Commit message generated');
-        return result.data;
+        spinner.succeed('Commit message generated');
+        return {
+          commitMessage: finalMessage,
+          assessment: parsed.assessment
+        };
 
       } else {
         // Multiple chunks processing with token-based splitting
-        progress.update('Processing large diff in chunks...');
-        
+        spinner.update('Processing large diff in chunks');
+
         const chunks = tokenManager.splitIntoTokenChunks(diffContent, {
           model,
           maxTokens: optimalChunkSize,
           reservedTokens: systemTokens,
         });
-        
-        logger.debug(`Split into ${chunks.length} token-based chunks`);
-        
+
         const baseRequest = {
           provider,
           model,
@@ -301,20 +368,31 @@ export class CoreOrchestrator {
         };
 
         const result = await apiManager.processChunks(chunks, baseRequest, provider);
-        
+
         if (!result.success || !result.data) {
           throw new ApiError(result.error?.message || 'Failed to process chunks');
         }
 
         // Combine chunk results into a single commit message
-        const finalMessage = this.combineChunkResults(result.data, options);
-        
-        progress.succeed('Commit message generated from chunks');
-        return finalMessage;
+        const rawMessage = this.combineChunkResults(result.data, options);
+
+        // Parse JSON response (with fallback to plain text)
+        const parsed = parseAIResponse(rawMessage);
+
+        spinner.update('Polishing the message');
+
+        // Stage 2: Finalize and clean the commit message part
+        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options);
+
+        spinner.succeed('Commit message generated');
+        return {
+          commitMessage: finalMessage,
+          assessment: parsed.assessment
+        };
       }
 
     } catch (error) {
-      progress.fail('Failed to generate commit message');
+      spinner.fail('Failed to generate commit message');
       throw error;
     }
   }
@@ -322,74 +400,199 @@ export class CoreOrchestrator {
   /**
    * Create system prompt based on options and preferences
    */
-  private createSystemPrompt(options: CliOptions): string {
+  private createSystemPrompt(options: CliOptions, userFeedback?: string): string {
+    // Use custom prompt from CLI option first, then from config, then default
+    if (options.prompt) {
+      return options.prompt;
+    }
+
+    if (this.config!.preferences.customPrompt) {
+      return this.config!.preferences.customPrompt;
+    }
+
+    // Build default prompt with structured blocks
     const format = this.config!.preferences.commitFormat;
     const language = this.config!.preferences.language;
 
-    let prompt = `You are an expert Git commit message generator. Generate a concise, meaningful commit message based on the provided git diff.
+    const sections: string[] = [];
 
-Requirements:
+    // Main instructions
+    const mainInstructions = `You are a senior software engineer and Git commit message expert with deep understanding of software architecture and code quality.
+
+YOUR MISSION: Analyze the git diff carefully and generate a professional, comprehensive commit message that accurately captures ALL significant changes.
+
+ANALYSIS REQUIREMENTS:
+1. THINK DEEPLY about what the code changes actually do
+2. Identify the PRIMARY purpose of the changes (feature, fix, refactor, etc.)
+3. Notice ALL important modifications - don't miss secondary changes
+4. Understand the INTENT behind the changes, not just the syntax
+5. Consider the IMPACT on the codebase (breaking changes, new features, bug fixes)
+6. Recognize patterns: new files, deletions, refactoring, configuration changes`;
+
+    sections.push(wrapInstructions(mainInstructions));
+
+    // Quality standards and rules
+    let rules = `- Be SPECIFIC about what changed (mention key functions, components, files when relevant)
+- Be ACCURATE - every word should reflect the actual changes
+- Be COMPLETE - include all important changes, don't omit significant details
+- Be CONCISE but INFORMATIVE - no fluff, but don't skip important info
+- Use technical terminology appropriately
 - Write in ${language === 'en' ? 'English' : language}
-- Use ${format === 'conventional' ? 'Conventional Commits format' : 'simple descriptive format'}
-- Focus on the most significant changes
-- Be specific and actionable
+- Follow ${format === 'conventional' ? 'Conventional Commits format strictly' : 'simple descriptive format'}
 
-`;
+THINK STEP BY STEP:
+1. What is the main change? (new feature, bug fix, refactor, etc.)
+2. What files/components are affected?
+3. Are there any breaking changes?
+4. Are there secondary important changes?
+5. What's the overall impact?`;
 
-    // Formatting constraints
+    // Add formatting constraints to rules
     if (options.oneLine) {
-      prompt += `- Generate a single-line commit message only\n`;
+      rules += `\n- Generate a single-line commit message only`;
     } else {
-      prompt += `- Keep subject line under 72 characters\n- Add body if needed for complex changes\n`;
+      rules += `\n- Keep subject line under 72 characters\n- Add body if needed for complex changes`;
     }
 
     if (options.descriptionLength) {
-      prompt += `- Limit description to ${options.descriptionLength} characters\n`;
+      rules += `\n- Limit description to ${options.descriptionLength} characters`;
     }
 
     if (options.emoji) {
-      prompt += `- Include appropriate emoji at the start of the commit message\n`;
+      rules += `\n- Include appropriate emoji at the start of the commit message`;
     }
 
     if (format === 'conventional') {
-      prompt += `\nConventional Commits format:
-<type>[optional scope]: <description>
+      rules += `\n\nConventional Commits format:\n<type>[optional scope]: <description>\n\nTypes: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert`;
 
-Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
-`;
-      
       if (options.emoji) {
-        prompt += `Emoji mapping:
-- feat: ✨
-- fix: 🐛
-- docs: 📝
-- style: 💄
-- refactor: ♻️
-- test: ✅
-- chore: 🔧
-- perf: ⚡
-- ci: 👷
-- build: 📦
-- revert: ⏪
-`;
+        rules += `\n\nEmoji mapping:\n- feat: ✨\n- fix: 🐛\n- docs: 📝\n- style: 💄\n- refactor: ♻️\n- test: ✅\n- chore: 🔧\n- perf: ⚡\n- ci: 👷\n- build: 📦\n- revert: ⏪`;
       }
     }
 
     if (options.type) {
-      prompt += `\nRequired type: ${options.type}`;
+      rules += `\n\nRequired type: ${options.type}`;
     }
 
     if (options.scope) {
-      prompt += `\nRequired scope: ${options.scope}`;
+      rules += `\nRequired scope: ${options.scope}`;
     }
 
     if (options.breaking) {
-      prompt += `\nThis is a BREAKING CHANGE - include "BREAKING CHANGE:" in the commit message.`;
+      rules += `\n\n⚠️ CRITICAL: This is a BREAKING CHANGE - MUST include "BREAKING CHANGE:" in the commit message footer with explanation.`;
     }
 
-    prompt += `\nGenerate only the commit message, no additional text or explanation.`;
+    sections.push(wrapRules(rules));
 
-    return prompt;
+    // Add context if provided
+    if (options.context) {
+      sections.push(wrapContext(options.context));
+    }
+
+    // Add user feedback if provided (from regeneration request)
+    if (userFeedback) {
+      sections.push(wrapUserFeedback(userFeedback));
+    }
+
+    // JSON schema for response
+    const jsonSchema = `{
+  "codeAssessment": "Brief (1-2 sentences) sarcastic, darkly humorous assessment of the code changes. Be witty and technically insightful. Channel maximum developer cynicism.",
+  "commitMessage": "Professional ${format === 'conventional' ? 'conventional commits format' : 'descriptive'} commit message"
+}`;
+
+    sections.push(wrapInBlock('RESPONSE_SCHEMA', jsonSchema, false));
+
+    // Final generation instructions
+    const finalInstructions = `GENERATE YOUR RESPONSE AS A VALID JSON OBJECT:
+
+1. CODE ASSESSMENT - Provide a brief (1-2 sentences), brutally honest, darkly humorous take on the code changes
+   Examples: "Someone discovered copy-paste today", "WIP commits everywhere, as expected", "Finally fixing that TODO from 2019"
+
+2. COMMIT MESSAGE - Generate a professional commit message:
+   - ${format === 'conventional' ? 'Use conventional commits format: type(scope): description' : 'Use clear descriptive format'}
+   - Subject line under 72 characters
+   - Add detailed body if changes are complex
+   - Include BREAKING CHANGE footer if applicable
+
+CRITICAL: Return ONLY a valid JSON object matching the RESPONSE_SCHEMA above. No markdown, no explanations, no code blocks - just pure JSON.
+
+Example output:
+{
+  "codeAssessment": "Ah yes, another 'quick fix' that touches 47 files",
+  "commitMessage": "refactor: restructure authentication flow\\n\\nMigrate from session-based to JWT authentication"
+}`;
+
+    sections.push(wrapInstructions(finalInstructions));
+
+    return sections.join('\n\n');
+  }
+
+  /**
+   * Finalize and clean up the commit message (Stage 2)
+   * Takes the raw AI-generated message and ensures it's perfectly formatted
+   */
+  private async finalizeCommitMessage(
+    rawMessage: string,
+    provider: 'openrouter' | 'openai',
+    options: CliOptions
+  ): Promise<string> {
+    const format = this.config!.preferences.commitFormat;
+
+    // Create finalization prompt with structured blocks
+    const instructions = `You are a commit message quality control expert.
+
+YOUR TASK: Clean and perfect the commit message below. Remove ANY explanatory text, prefixes, or formatting artifacts.`;
+
+    const rules = `1. Output ONLY the final commit message - nothing else
+2. Remove prefixes like "commit message:", "here is", "this is", etc.
+3. Remove surrounding quotes, backticks, or markdown
+4. Remove any explanations or comments
+5. Keep the message structure intact (subject + body + footer if present)
+6. Start directly with the commit type or message
+7. Preserve ${format === 'conventional' ? 'conventional commits format (type(scope): description)' : 'simple format'}
+8. Preserve line breaks for multi-line messages
+9. Ensure subject line is under 72 characters
+10. NO additional text, NO commentary, NO explanations`;
+
+    const finalizationPrompt = `${wrapInstructions(instructions)}
+
+${wrapRules(rules)}
+
+[RAW_MESSAGE_TO_CLEAN]
+${cleanText(rawMessage)}
+[/RAW_MESSAGE_TO_CLEAN]
+
+OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
+
+    try {
+      const model = this.getModel(provider);
+
+      const result = await apiManager.generateCommitMessage(
+        {
+          provider,
+          model,
+          maxTokens: this.config!.preferences.maxTokens,
+          temperature: 0.3, // Lower temperature for more consistent cleaning
+          messages: [
+            { role: 'system', content: finalizationPrompt },
+            { role: 'user', content: 'Clean this message now.' }
+          ],
+        },
+        provider
+      );
+
+      if (!result.success || !result.data) {
+        // If finalization fails, return original message
+        logger.warn('Finalization failed, using original message');
+        return rawMessage;
+      }
+
+      return result.data.trim();
+    } catch (error) {
+      // If finalization fails, return original message
+      logger.warn('Finalization error, using original message');
+      return rawMessage;
+    }
   }
 
   /**
@@ -501,29 +704,86 @@ Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
 
   /**
    * Confirm commit with user (unless auto-confirm is enabled)
+   * Returns: 'confirm' | 'regenerate' | 'cancel'
    */
-  private async confirmCommit(message: string, options: CliOptions): Promise<boolean> {
+  private async confirmCommit(
+    message: string,
+    assessment: string | null,
+    options: CliOptions
+  ): Promise<{ action: 'confirm' | 'regenerate' | 'cancel'; feedback?: string }> {
     if (options.yes || this.config!.preferences.autoConfirm) {
-      return true;
+      return { action: 'confirm' };
     }
 
-    // For now, we'll implement a simple console confirmation
-    // In a full implementation, you might want to use a library like inquirer
-    console.log(`\nProposed commit message:\n${message}\n`);
-    
-    // Simple readline implementation for confirmation
-    const readline = await import('readline');
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
+    // Show sarcastic code assessment if available
+    if (assessment) {
+      console.log(chalk.dim('\n💭 AI thinks: ') + chalk.yellow.italic(assessment));
+    }
 
-    return new Promise((resolve) => {
-      rl.question('Create this commit? (y/N): ', (answer) => {
-        rl.close();
-        resolve(answer.toLowerCase().startsWith('y'));
+    console.log(chalk.cyan('\n📝 Generated commit message:'));
+    console.log(chalk.gray('——————————————————'));
+    console.log(chalk.white(message));
+    console.log(chalk.gray('——————————————————\n'));
+
+    try {
+      const action = await confirm({
+        message: 'Accept this commit message?',
+        initialValue: true,
       });
-    });
+
+      if (isCancel(action)) {
+        return { action: 'cancel' };
+      }
+
+      if (action) {
+        return { action: 'confirm' };
+      }
+
+      // User rejected - ask if they want to regenerate with feedback
+      console.log('');
+      const shouldRegenerate = await confirm({
+        message: 'Would you like to regenerate with additional instructions?',
+        initialValue: true,
+      });
+
+      if (isCancel(shouldRegenerate) || !shouldRegenerate) {
+        return { action: 'cancel' };
+      }
+
+      // Get user feedback for regeneration
+      const feedback = await text({
+        message: 'What should be changed or improved?',
+        placeholder: 'e.g., "Be more specific about the bug fix" or "Mention the new API endpoint"',
+        validate: (value) => {
+          if (!value || value.trim().length < 3) {
+            return 'Please provide at least 3 characters of feedback';
+          }
+          return undefined; // Valid input
+        },
+      });
+
+      if (isCancel(feedback)) {
+        return { action: 'cancel' };
+      }
+
+      return { action: 'regenerate', feedback: feedback as string };
+
+    } catch (error) {
+      // Fallback to simple confirmation if prompts fail
+      console.log(chalk.yellow('⚠ Interactive prompts unavailable, using simple mode'));
+      const readline = await import('readline');
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      return new Promise((resolve) => {
+        rl.question('Accept this commit? (y/N): ', (answer) => {
+          rl.close();
+          resolve({ action: answer.toLowerCase().startsWith('y') ? 'confirm' : 'cancel' });
+        });
+      });
+    }
   }
 
   /**
@@ -563,24 +823,22 @@ Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert
   private async performPush(contextualLogger: typeof logger): Promise<void> {
     const hasUpstream = await gitManager.hasUpstream();
     const currentBranch = await gitManager.getCurrentBranch();
-    
-    const pushMessage = hasUpstream 
+
+    const pushMessage = hasUpstream
       ? `Pushing to ${currentBranch}`
       : `Setting upstream and pushing to ${currentBranch}`;
-    
-    const pushProgress = contextualLogger.startProgress(pushMessage);
-    
+
+    const pushSpinner = createProcessingSpinner(pushMessage);
+    pushSpinner.start();
+
     try {
       await gitManager.pushToRemote(true); // Set upstream if needed
-      const successMessage = hasUpstream 
+      const successMessage = hasUpstream
         ? `Pushed to ${currentBranch}`
         : `Upstream set and pushed to ${currentBranch}`;
-      pushProgress.succeed(successMessage);
-      console.log(chalk.green('✓ Changes pushed successfully'));
+      pushSpinner.succeed(successMessage);
     } catch (error) {
-      pushProgress.fail(`Push failed`);
-      console.log(chalk.red(`✗ Error: ${(error as Error).message}`));
-      console.log(chalk.gray('💡 You can try pushing manually: git push'));
+      pushSpinner.fail(`Push failed: ${(error as Error).message}`);
     }
   }
 

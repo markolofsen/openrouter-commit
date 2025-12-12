@@ -26,52 +26,130 @@ export class DiffFilter {
     relevancyThreshold: 0.1,
   };
 
-  // Patterns for generated files
+  // Patterns for generated files - comprehensive coverage for all ecosystems
   private readonly generatedFilePatterns = [
+    // Lock files (dependency managers)
     /\.lock$/,
     /package-lock\.json$/,
     /yarn\.lock$/,
     /pnpm-lock\.yaml$/,
     /Gemfile\.lock$/,
+    /Pipfile\.lock$/,
+    /poetry\.lock$/,
     /composer\.lock$/,
     /go\.sum$/,
-    /\.generated\./,
+    /cargo\.lock$/i,
+    /Podfile\.lock$/,
+    /pubspec\.lock$/,
+    /flake\.lock$/,
+
+    // Generated/build directories
+    /^\.generated\./,
     /dist\/.*$/,
     /build\/.*$/,
+    /out\/.*$/,
+    /target\/.*$/,  // Rust, Java
+    /bin\/.*$/,
+    /obj\/.*$/,  // .NET
+    /\.next\/.*$/,  // Next.js
+    /\.nuxt\/.*$/,  // Nuxt.js
+    /\.astro\/.*$/,
+    /\.svelte-kit\/.*$/,
+    /\.cache\/.*$/,
+    /\.output\/.*$/,
+    /public\/build\/.*$/,
+
+    // Test coverage
     /coverage\/.*$/,
+    /\.nyc_output\/.*$/,
+    /htmlcov\/.*$/,
+    /test-results\/.*$/,
+    /\.pytest_cache\/.*$/,
+
+    // Dependencies
     /node_modules\/.*$/,
+    /vendor\/.*$/,
+    /bower_components\/.*$/,
+    /\.pnp\/.*$/,
+    /venv\/.*$/,
+    /\.venv\/.*$/,
+    /env\/.*$/,
+
+    // Version control & IDE
     /\.git\/.*$/,
+    /\.svn\/.*$/,
     /\.vscode\/.*$/,
     /\.idea\/.*$/,
+    /\.fleet\/.*$/,
+    /\.vs\/.*$/,
+
+    // OS files
     /\.DS_Store$/,
     /thumbs\.db$/i,
     /desktop\.ini$/i,
-    // Code generation patterns
-    /.*\.g\.ts$/, // Generated TypeScript
-    /.*\.g\.dart$/, // Generated Dart
-    /.*_pb2\.py$/, // Protocol buffers
-    /.*\.pb\.go$/, // Protocol buffers Go
-    /.*\.(min|bundle)\.(js|css)$/, // Minified files
-    // Database migrations (usually auto-generated)
-    /.*migrations\/.*\.py$/,
-    /.*migrations\/.*\.sql$/,
-    // Binary and archive files
-    /.*\.(zip|rar|7z|tar|gz|bz2|xz)$/i,
-    /.*\.(exe|dll|so|dylib|app)$/i,
-    /.*\.(jpg|jpeg|png|gif|bmp|ico|svg|webp|tiff)$/i,
-    /.*\.(mp3|mp4|avi|mov|wmv|flv|webm|ogg|wav)$/i,
+    /\._.*$/,  // macOS resource forks
+
+    // Code generation
+    /.*\.g\.ts$/,  // TypeScript
+    /.*\.g\.dart$/,  // Dart
+    /.*\.g\.cs$/,  // C#
+    /.*\.g\.go$/,  // Go
+    /.*_pb2\.py$/,  // Protocol buffers
+    /.*\.pb\.go$/,
+    /.*_grpc\.py$/,  // gRPC
+    /.*\.(min|bundle|chunk)\.(js|css|mjs)$/,  // Minified
+    /.*\.map$/,  // Source maps
+    /.*\.d\.ts$/,  // TypeScript declarations (often generated)
+
+    // Framework artifacts
+    /\.tsbuildinfo$/,
+    /\.docusaurus\/.*$/,
+    /\.vercel\/.*$/,
+    /\.netlify\/.*$/,
+
+    // Database migrations (often auto-generated)
+    /migrations\/\d+_.*\.(py|sql|js|ts)$/,
+
+    // Binary/archive
+    /.*\.(zip|rar|7z|tar|gz|bz2|xz|tgz)$/i,
+    /.*\.(exe|dll|so|dylib|lib|a|app|dmg|pkg)$/i,
+
+    // Images
+    /.*\.(jpg|jpeg|png|gif|bmp|ico|svg|webp|tiff|psd|ai|sketch)$/i,
+
+    // Media
+    /.*\.(mp3|mp4|avi|mov|wmv|flv|webm|ogg|wav|m4a)$/i,
+
+    // Documents/fonts
     /.*\.(pdf|doc|docx|xls|xlsx|ppt|pptx)$/i,
-    /.*\.(bin|dat|db|sqlite|sqlite3)$/i,
     /.*\.woff2?$/i,
-    /.*\.ttf$/i,
-    /.*\.eot$/i,
-    // Compiled/cached files
+    /.*\.(ttf|otf|eot)$/i,
+
+    // Database files
+    /.*\.(bin|dat|db|sqlite|sqlite3)$/i,
+
+    // Compiled/cached
     /.*\.__pycache__\/.*$/,
     /.*\.pyc$/,
     /.*\.pyo$/,
     /.*\.class$/,
     /.*\.o$/,
     /.*\.obj$/,
+
+    // Mobile/Native
+    /ios\/Pods\/.*$/,
+    /android\/\.gradle\/.*$/,
+    /android\/build\/.*$/,
+    /\.xcworkspace\/.*$/,
+    /DerivedData\/.*$/,
+
+    // Logs & temp
+    /.*\.log$/i,
+    /logs\/.*$/,
+    /tmp\/.*$/,
+    /.*\.tmp$/,
+    /.*\.swp$/,  // Vim swap
+    /.*~$/,  // Backups
   ];
 
   // Patterns for formatter/linter changes (low semantic value)
@@ -90,8 +168,8 @@ export class DiffFilter {
     // Quote style changes
     /^["']/,
     // Bracket style changes
-    /^[\{\[\(]\s*$/,
-    /^[\}\]\)]\s*$/,
+    /^[{[(]\s*$/,
+    /^[}\])]\s*$/,
   ];
 
   // High-value code patterns

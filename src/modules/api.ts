@@ -288,17 +288,8 @@ export class ApiManager {
   private extractCommitMessage(response: ApiResponse, provider: string): string {
     let message = response.message.trim();
 
-    // Remove common prefixes and formatting
-    message = message.replace(/^(commit message:|commit:|message:)\s*/i, '');
-    message = message.replace(/^["']|["']$/g, ''); // Remove surrounding quotes
-    message = message.replace(/^\*\s*/, ''); // Remove leading asterisk
-    
-    // Clean up any markdown formatting that might have been added
-    message = message.replace(/^```[\s\S]*?\n/, ''); // Remove opening code blocks
-    message = message.replace(/\n```[\s\S]*?$/, ''); // Remove closing code blocks
-    message = message.replace(/^`|`$/g, ''); // Remove surrounding backticks
-    
-    // Normalize line endings and remove excessive whitespace
+    // Minimal cleanup - Stage 2 finalization will handle the rest
+    // Just normalize line endings and whitespace
     message = message.replace(/\r\n/g, '\n'); // Normalize line endings
     message = message.replace(/\n{3,}/g, '\n\n'); // Limit consecutive newlines
     message = message.trim();

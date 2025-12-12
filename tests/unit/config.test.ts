@@ -266,6 +266,56 @@ describe('ConfigManager', () => {
     });
   });
 
+  describe('updatePreferences', () => {
+    it('should update custom prompt preference', async () => {
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue(JSON.stringify(DEFAULT_CONFIG));
+
+      const customPrompt = 'Generate concise commit messages';
+      await configManager.updatePreferences({ customPrompt });
+
+      expect(mockFs.writeFile).toHaveBeenCalled();
+      const savedConfig = JSON.parse(mockFs.writeFile.mock.calls[0]?.[1] as string);
+      expect(savedConfig.preferences.customPrompt).toBe(customPrompt);
+    });
+
+    it('should clear custom prompt when set to undefined', async () => {
+      const configWithPrompt = {
+        ...DEFAULT_CONFIG,
+        preferences: {
+          ...DEFAULT_CONFIG.preferences,
+          customPrompt: 'Old prompt',
+        },
+      };
+
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue(JSON.stringify(configWithPrompt));
+
+      await configManager.updatePreferences({ customPrompt: undefined });
+
+      expect(mockFs.writeFile).toHaveBeenCalled();
+      const savedConfig = JSON.parse(mockFs.writeFile.mock.calls[0]?.[1] as string);
+      expect(savedConfig.preferences.customPrompt).toBeUndefined();
+    });
+
+    it('should update multiple preferences at once', async () => {
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue(JSON.stringify(DEFAULT_CONFIG));
+
+      await configManager.updatePreferences({
+        customPrompt: 'Custom prompt',
+        autoConfirm: true,
+        temperature: 0.8,
+      });
+
+      expect(mockFs.writeFile).toHaveBeenCalled();
+      const savedConfig = JSON.parse(mockFs.writeFile.mock.calls[0]?.[1] as string);
+      expect(savedConfig.preferences.customPrompt).toBe('Custom prompt');
+      expect(savedConfig.preferences.autoConfirm).toBe(true);
+      expect(savedConfig.preferences.temperature).toBe(0.8);
+    });
+  });
+
   describe('getConfigPath', () => {
     it('should return correct config path', () => {
       const path = configManager.getConfigPath();

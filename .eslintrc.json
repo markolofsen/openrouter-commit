@@ -3,8 +3,11 @@
     "es2022": true,
     "node": true
   },
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint"],
   "extends": [
-    "eslint:recommended"
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended"
   ],
   "parserOptions": {
     "ecmaVersion": "latest",
@@ -13,12 +16,15 @@
   "rules": {
     "prefer-const": "error",
     "no-var": "error",
-    "no-unused-vars": "off"
+    "@typescript-eslint/no-unused-vars": "off",
+    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/no-non-null-assertion": "off"
   },
   "ignorePatterns": [
     "dist/**/*",
     "node_modules/**/*",
     "tests/**/*",
-    "*.d.ts"
+    "*.d.ts",
+    "*.js"
   ]
 }

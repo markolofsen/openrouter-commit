@@ -1,26 +1,80 @@
-# ORCommit Git Manager
+# ORCommit - AI Commit Message Generator | Automated Git Commits with OpenAI & Claude
 
-> AI-powered Git commit message generator with efficient chunk processing for large files
+<p align="center">
+  <img src="https://unpkg.com/orcommit@latest/preview.png" alt="ORCommit Banner" width="600">
+</p>
 
-[![npm version](https://badge.fury.io/js/orcommit.svg)](https://badge.fury.io/js/orcommit)
-[![TypeScript](https://badges.frapsoft.com/typescript/code/typescript.svg?v=101)](https://github.com/ellerbrock/typescript-badges/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+> **AI-powered git automation** for developers: Generate professional commit messages instantly using OpenAI, Claude, or local AI models
 
-A sophisticated CLI tool that generates meaningful, contextual commit messages using ORCommit and OpenAI APIs. Designed with a modular TypeScript architecture and optimized for handling large codebases through intelligent diff chunking.
+<p align="center">
+  <a href="https://badge.fury.io/js/orcommit"><img src="https://badge.fury.io/js/orcommit.svg" alt="npm version"></a>
+  <a href="https://github.com/ellerbrock/typescript-badges/"><img src="https://badges.frapsoft.com/typescript/code/typescript.svg?v=101" alt="TypeScript"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
-## ✨ Features
+**ORCommit** is the ultimate **AI commit message generator** and **git automation CLI tool** for modern developers. Generate meaningful, contextual commit messages using **GPT-4**, **Claude AI**, **OpenRouter**, or **local AI models (Ollama)**. Built with TypeScript, featuring **intelligent diff chunking**, **interactive regeneration**, **custom prompts**, and **multi-provider support**.
 
-- 🤖 **AI-Powered**: Generate commit messages using ORCommit and OpenAI models
-- 📦 **Token-Aware Chunking**: Intelligently split large diffs based on actual token limits
-- 🚀 **Smart Push Integration**: Interactive push prompts with automatic upstream setup
-- 🎨 **Elegant UI**: Structured progress with phase indicators and timing
-- ⚡ **Lightning Fast**: Intelligent caching with memory and disk persistence
-- 🔧 **Highly Configurable**: Extensive CLI options and provider settings
-- 🔒 **Secure**: Safe storage of API keys with proper file permissions (600)
-- 🎯 **Conventional Commits**: Full support for conventional commit format with emoji
-- 🛡️ **Robust**: Comprehensive error handling with timeouts and auto-recovery
-- 🧠 **Smart Filtering**: Automatically filters generated files and whitespace
-- 🧪 **Production Ready**: Comprehensive test suite with 90%+ coverage
+Perfect for developers seeking **automated git commits**, **AI-powered development tools**, and **developer productivity** automation with support for **Conventional Commits** format.
+
+## ✨ Key Features - Why Choose ORCommit?
+
+### 🤖 **Multi-Provider AI Support**
+Generate commit messages with your choice of AI:
+- **OpenAI** (GPT-4, GPT-4 Turbo, GPT-3.5)
+- **Anthropic Claude** (via OpenRouter)
+- **OpenRouter** (access to 200+ AI models)
+- **Local AI Models** (Ollama support - free & private)
+
+### 🔄 **Interactive Regeneration with Feedback**
+Not happy with the generated message? Provide feedback and regenerate:
+- Accept, cancel, or improve commit messages
+- Two-stage AI processing for higher quality
+- Up to 5 regeneration attempts with user guidance
+- Smart caching for instant responses
+
+### 🎯 **Custom Prompts & Context**
+Full control over AI behavior:
+- Override default prompts with `--prompt`
+- Add project context with `--context`
+- Save team-specific prompts to config
+- Perfect for corporate standards and coding guidelines
+
+### 📦 **Intelligent Diff Processing**
+Handles codebases of any size:
+- Token-aware chunking for large files
+- Smart filtering (100+ patterns for generated files)
+- Supports all ecosystems: JS, Python, Rust, Go, .NET, Flutter
+- Filters lock files, build outputs, and dependencies
+
+### 🚀 **Seamless Git Workflow**
+Complete git automation:
+- Interactive push prompts with upstream setup
+- Git hooks integration for automated commits
+- Conventional Commits format support
+- Emoji support (Gitmoji compatible)
+- Breaking change detection
+
+### ⚡ **Lightning Fast Performance**
+Optimized for speed:
+- Two-level caching (memory + disk)
+- Concurrent API processing
+- Exponential backoff for rate limits
+- Instant cached responses
+
+### 🔒 **Enterprise-Ready Security**
+Built with security in mind:
+- Secure API key storage (600 permissions)
+- No logging of sensitive data
+- Environment variable support
+- Prevents accidental secret commits
+
+### 🎨 **Beautiful Developer Experience**
+Polished UI/UX:
+- Elegant progress indicators
+- Clear success/failure states
+- Timing information
+- Structured phase-based output
+- Verbose mode for debugging
 
 ## 🚀 Installation
 
@@ -36,26 +90,46 @@ Or use directly with npx:
 npx orcommit
 ```
 
-## 📖 Quick Start
+## 📖 Quick Start - Get Started in 3 Steps
 
-1. **Set up your API key**:
-   ```bash
-   orc config set openrouter your-api-key-here
-   # or for OpenAI
-   orc config set openai your-openai-key-here
-   ```
+### 1️⃣ **Install ORCommit**
+```bash
+# Global installation (recommended)
+npm install -g orcommit
 
-2. **Stage your changes**:
-   ```bash
-   git add .
-   ```
+# Or use directly without installing
+npx orcommit
+```
 
-3. **Generate and create commit**:
-   ```bash
-   orc commit
-   ```
+### 2️⃣ **Configure Your AI Provider**
+```bash
+# Option 1: OpenRouter (recommended - access to 200+ models)
+orc config set openrouter your-api-key-here
 
-That's it! The tool will analyze your staged changes and generate an appropriate commit message.
+# Option 2: OpenAI (GPT-4, GPT-3.5)
+orc config set openai your-openai-key-here
+
+# Option 3: Use local AI models (free & private)
+# Install Ollama first: https://ollama.ai
+orc config model openrouter ollama/mistral
+```
+
+### 3️⃣ **Generate Your First AI Commit**
+```bash
+# Stage your changes
+git add .
+
+# Generate and commit (interactive mode)
+orc commit
+
+# Or auto-commit without confirmation
+orc commit --yes
+
+# With custom context for better results
+orc commit --context "Critical security fix for authentication"
+```
+
+**That's it!** The AI will analyze your code changes and generate a professional commit message automatically.
 
 ## 🛠 Commands
 
@@ -69,6 +143,10 @@ Generate and create a commit message for staged changes.
 - `-d, --dry-run` - Generate message without creating commit
 - `-v, --verbose` - Enable verbose logging
 - `-w, --watch` - Watch for changes and auto-generate commits
+
+**AI Customization (NEW):**
+- `--prompt <text>` - Override default AI prompt completely
+- `--context <text>` - Add additional context to the prompt
 
 **Commit Format:**
 - `-s, --scope <scope>` - Specify commit scope (e.g., auth, ui, api)
@@ -94,43 +172,54 @@ Generate and create a commit message for staged changes.
 
 **Examples:**
 ```bash
-# Basic usage with interactive push prompt
+# Basic usage - interactive with regeneration support
 orc commit
 
-# Auto-confirm and push
+# Auto-confirm and push to remote
 orc commit --yes --push
 
-# Generate with emoji and one-line format
-orc commit --emoji --one-line
+# Custom prompt for specific style
+orc commit --prompt "Generate a detailed technical commit message with examples"
 
-# Specify type, scope and auto-push
-orc commit --type feat --scope auth --auto-push
+# Add context for better AI understanding
+orc commit --context "This fixes a critical security vulnerability in JWT validation"
 
-# Dry run to see generated message
+# Combine context with custom settings
+orc commit --context "Refactoring for performance" --type refactor --scope api
+
+# Generate with emoji and conventional commits
+orc commit --emoji --one-line --type feat --scope ui
+
+# Breaking change with detailed description
+orc commit --breaking --type feat --description-length 100
+
+# Dry run to preview AI-generated message
 orc commit --dry-run --verbose
 
-# Breaking change with description limit
-orc commit --breaking --type feat --description-length 50
+# Use specific AI provider (OpenAI instead of default)
+orc commit --provider openai --clear-cache
 
-# Clear cache and use specific provider
-orc commit --clear-cache --provider openai
-
-# Process only 5 files with no caching
-orc commit --max-files 5 --no-cache
+# Large codebase optimization
+orc commit --max-files 10 --no-cache --ignore-generated
 ```
 
 ### `orc config`
-Manage configuration settings.
+Manage configuration settings and customize AI behavior.
 
 **Subcommands:**
 ```bash
-# Set API key
+# Set API key for AI providers
 orc config set openrouter sk-your-key-here
 orc config set openai sk-your-openai-key
 
-# Set default model
+# Set default AI model
 orc config model openrouter anthropic/claude-3-haiku:beta
+orc config model openrouter openai/gpt-4-turbo
 orc config model openai gpt-4
+
+# Custom prompts (NEW) - persist across sessions
+orc config prompt "Generate concise commit messages following our team standards"
+orc config prompt  # Clear custom prompt (revert to default)
 
 # View configuration
 orc config get
@@ -211,9 +300,41 @@ When using `--type` option, these conventional commit types are supported:
 - `build` - Build system changes
 - `revert` - Reverting previous commits
 
-## 🏗 Architecture
+## 💡 Use Cases - Who Benefits from ORCommit?
 
-The tool is built with a modular TypeScript architecture:
+### 👨‍💻 **Individual Developers**
+- Save time writing commit messages
+- Maintain consistent commit history
+- Learn best practices from AI-generated messages
+- Never forget to document important changes
+
+### 👥 **Development Teams**
+- Enforce team commit message standards with custom prompts
+- Ensure conventional commits compliance
+- Improve code review efficiency
+- Track changes across large codebases
+
+### 🏢 **Enterprise & Agencies**
+- Maintain corporate coding standards
+- Audit trail for compliance
+- Multi-language project support
+- Integration with existing git workflows
+
+### 🎓 **Students & Learning**
+- Learn git best practices
+- Understand what makes a good commit message
+- Practice conventional commits format
+- Build portfolio with professional commits
+
+### 🚀 **Open Source Projects**
+- Maintain consistent contribution quality
+- Help new contributors write better commits
+- Save maintainer time on commit message reviews
+- Support for multiple languages and formats
+
+## 🏗 Architecture & Technology Stack
+
+Built with modern TypeScript and cutting-edge AI technology:
 
 ### Core Modules
 
@@ -422,4 +543,50 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**Built with ❤️ using TypeScript, Commander.js, and cutting-edge AI technology.**
+## 🏢 Built by Reforms.ai - AI SaaS Development Experts
+
+**ORCommit** is developed and maintained by **[Reforms.ai](https://reforms.ai)**, a leading AI SaaS development company specializing in cutting-edge AI-powered solutions for modern development workflows.
+
+### 🚀 About Reforms.ai
+
+Reforms.ai is a technology company focused on building innovative AI-powered tools and SaaS solutions that enhance developer productivity and streamline software development processes. Our mission is to make AI accessible and practical for developers worldwide.
+
+### 🛠️ Our Solutions
+
+In addition to ORCommit, we develop:
+
+- **[Django CFG](https://github.com/markolofsen/django-cfg)** - Advanced configuration management for Django projects with environment-based settings, type safety, and validation
+- **AI-powered development tools** - Automation solutions for modern dev workflows
+- **Custom AI integrations** - Tailored AI solutions for enterprise clients
+- **SaaS platforms** - Scalable cloud-based applications with AI capabilities
+
+### 🤝 Work With Us
+
+Reforms.ai offers:
+- **Custom AI Development** - Build AI-powered features for your products
+- **SaaS Consulting** - Architecture, scaling, and best practices
+- **AI Integration Services** - Integrate OpenAI, Claude, and other AI providers
+- **Developer Tools** - Open-source and commercial solutions for developers
+
+**Interested in AI-powered solutions for your business?**
+Visit [reforms.ai](https://reforms.ai) or contact us for custom development, consulting, or partnership opportunities.
+
+### 🌟 Support Our Work
+
+If you find ORCommit useful, consider:
+- ⭐ Starring the repository
+- 🐛 Reporting bugs and suggesting features
+- 💬 Sharing with other developers
+- 🤝 Contributing to the project
+- 💼 Hiring us for custom AI development
+
+**Connect with us:**
+- Website: [https://reforms.ai](https://reforms.ai)
+- GitHub: [@markolofsen](https://github.com/markolofsen)
+- Email: contact@reforms.ai
+
+---
+
+**Built with ❤️ by [Reforms.ai](https://reforms.ai) using TypeScript, Commander.js, and cutting-edge AI technology.**
+
+*Empowering developers with intelligent automation since 2024.*

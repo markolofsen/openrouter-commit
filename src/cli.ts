@@ -60,6 +60,9 @@ class CliApplication {
       // Git push options
       .option('--push', 'Push changes to remote after commit', false)
       .option('--auto-push', 'Automatically push all future commits', false)
+      // Custom prompt options
+      .option('--prompt <text>', 'Custom system prompt for AI (overrides default)')
+      .option('--context <text>', 'Additional context to include in the prompt')
       .action(async (options: CliOptions) => {
         await this.handleCommitCommand(options);
       });
@@ -88,6 +91,13 @@ class CliApplication {
       .description('Set default model for provider')
       .action(async (provider: string, model: string) => {
         await this.handleConfigModel(provider, model);
+      });
+
+    configCmd
+      .command('prompt [text]')
+      .description('Set or clear custom system prompt (omit text to clear)')
+      .action(async (text?: string) => {
+        await this.handleConfigPrompt(text);
       });
 
     configCmd
@@ -262,6 +272,27 @@ class CliApplication {
 
     } catch (error) {
       logger.error('Failed to set model', error as Error);
+      process.exit(1);
+    }
+  }
+
+  /**
+   * Handle custom prompt configuration
+   */
+  private async handleConfigPrompt(text?: string): Promise<void> {
+    try {
+      if (text === undefined || text.trim() === '') {
+        // Clear custom prompt
+        await configManager.updatePreferences({ customPrompt: undefined });
+        logger.success('Custom prompt cleared. Will use default prompt.');
+      } else {
+        // Set custom prompt
+        await configManager.updatePreferences({ customPrompt: text });
+        logger.success('Custom prompt saved successfully');
+        logger.info(`Preview: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}`);
+      }
+    } catch (error) {
+      logger.error('Failed to set custom prompt', error as Error);
       process.exit(1);
     }
   }

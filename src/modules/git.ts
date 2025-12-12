@@ -24,6 +24,38 @@ export class GitManager {
   }
 
   /**
+   * Check if current directory is inside a git submodule
+   */
+  async isSubmodule(): Promise<boolean> {
+    try {
+      const { stdout } = await execAsync('git rev-parse --show-superproject-working-tree', EXEC_OPTIONS);
+      return stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get submodule name if in submodule
+   */
+  async getSubmoduleName(): Promise<string | null> {
+    try {
+      const isSubmod = await this.isSubmodule();
+      if (!isSubmod) return null;
+
+      const { stdout } = await execAsync('git rev-parse --show-prefix', EXEC_OPTIONS);
+      const prefix = stdout.trim();
+
+      // Get submodule name from .git file
+      const { stdout: gitFileContent } = await execAsync('cat .git', EXEC_OPTIONS);
+      const match = gitFileContent.match(/gitdir: \.\.\/\.git\/modules\/(.+)/);
+      return match?.[1] || prefix || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Get staged changes as a structured diff
    */
   async getStagedDiff(options?: Partial<ChunkProcessingOptions>): Promise<GitDiff> {
@@ -396,16 +428,26 @@ export class GitManager {
 
   /**
    * Push commits to remote repository
+   * Handles both regular repos and submodules
    */
   async pushToRemote(setUpstream = false): Promise<void> {
     try {
       const hasUpstreamBranch = await this.hasUpstream();
-      
+      const isSubmod = await this.isSubmodule();
+
+      // Push the current repository/submodule
       if (!hasUpstreamBranch && setUpstream) {
         const currentBranch = await this.getCurrentBranch();
         await execAsync(`git push --set-upstream origin ${currentBranch}`, EXEC_OPTIONS);
       } else {
         await execAsync('git push', EXEC_OPTIONS);
+      }
+
+      // If this is a submodule, warn about parent repo
+      if (isSubmod) {
+        const submoduleName = await this.getSubmoduleName();
+        logger.info(`Pushed submodule ${submoduleName || 'changes'}`);
+        logger.warn('Note: Parent repository may need to be committed and pushed to reflect submodule update');
       }
     } catch (error) {
       throw new GitError(
