@@ -23,7 +23,7 @@ export class DiffFilter {
     ignoreFormatterNoise: true,
     ignoreLockFiles: true,
     maxFileSize: 1024 * 1024, // 1MB
-    relevancyThreshold: 0.1,
+    relevancyThreshold: 0.05, // Lowered from 0.1 to catch more relevant files
   };
 
   // Patterns for generated files - comprehensive coverage for all ecosystems
@@ -157,17 +157,12 @@ export class DiffFilter {
     // Whitespace only changes
     /^\s*$/,
     /^[\s\t]+$/,
-    // Import sorting
-    /^import\s+/,
-    /^from\s+.*import/,
-    /^using\s+/,
-    /^#include\s+/,
-    // Trailing commas, semicolons
-    /,\s*$/,
-    /;\s*$/,
-    // Quote style changes
-    /^["']/,
-    // Bracket style changes
+    // Trailing commas, semicolons ONLY (not lines that happen to end with them)
+    /^,\s*$/,
+    /^;\s*$/,
+    // Quote-only lines
+    /^["']\s*$/,
+    // Bracket-only lines
     /^[{[(]\s*$/,
     /^[}\])]\s*$/,
   ];
@@ -189,14 +184,75 @@ export class DiffFilter {
   ];
 
   /**
+   * Quick filter to remove obvious non-code files
+   * This is a lightweight pre-filter before full relevancy analysis
+   */
+  quickFilter(diff: GitDiff): GitDiff {
+    logger.debug('Quick filtering diff', { originalFiles: diff.files.length });
+
+    const filteredFiles = diff.files.filter(file => {
+      // Always skip binary files
+      if (file.isBinary || this.isBinaryFile(file.path)) {
+        logger.debug('Quick filter: skipping binary file', { path: file.path });
+        return false;
+      }
+
+      // Always skip lock files
+      if (this.isLockFile(file.path)) {
+        logger.debug('Quick filter: skipping lock file', { path: file.path });
+        return false;
+      }
+
+      // Skip package manager directories
+      if (/node_modules|vendor|bower_components/.test(file.path)) {
+        logger.debug('Quick filter: skipping package manager directory', { path: file.path });
+        return false;
+      }
+
+      // Skip build outputs
+      if (/^(dist|build|out|\.next|\.nuxt)\//.test(file.path)) {
+        logger.debug('Quick filter: skipping build output', { path: file.path });
+        return false;
+      }
+
+      // Skip cache and temp directories
+      if (/\.(cache|tmp|temp)\//.test(file.path)) {
+        logger.debug('Quick filter: skipping cache/temp', { path: file.path });
+        return false;
+      }
+
+      // Keep everything else for detailed analysis
+      return true;
+    });
+
+    const filteredDiff: GitDiff = {
+      files: filteredFiles,
+      totalLines: filteredFiles.reduce((sum, file) =>
+        sum + file.chunks.reduce((chunkSum, chunk) => chunkSum + chunk.lines.length, 0), 0
+      ),
+      totalSize: filteredFiles.reduce((sum, file) =>
+        sum + JSON.stringify(file).length, 0
+      ),
+    };
+
+    logger.debug('Quick filter complete', {
+      originalFiles: diff.files.length,
+      filteredFiles: filteredDiff.files.length,
+      removed: diff.files.length - filteredDiff.files.length,
+    });
+
+    return filteredDiff;
+  }
+
+  /**
    * Filter diff based on relevancy and noise reduction
    */
   filterDiff(diff: GitDiff, options: Partial<FilterOptions> = {}): GitDiff {
     const opts = { ...this.defaultOptions, ...options };
-    
-    logger.debug('Filtering diff', { 
+
+    logger.debug('Filtering diff', {
       originalFiles: diff.files.length,
-      options: opts 
+      options: opts
     });
 
     const filteredFiles = diff.files
@@ -213,10 +269,10 @@ export class DiffFilter {
 
     const filteredDiff: GitDiff = {
       files: relevantFiles,
-      totalLines: relevantFiles.reduce((sum, file) => 
+      totalLines: relevantFiles.reduce((sum, file) =>
         sum + file.chunks.reduce((chunkSum, chunk) => chunkSum + chunk.lines.length, 0), 0
       ),
-      totalSize: relevantFiles.reduce((sum, file) => 
+      totalSize: relevantFiles.reduce((sum, file) =>
         sum + JSON.stringify(file).length, 0
       ),
     };
@@ -275,16 +331,14 @@ export class DiffFilter {
   private filterChunk(chunk: GitChunk, options: Required<FilterOptions>): GitChunk | null {
     let filteredLines = chunk.lines;
 
-    // Filter whitespace-only changes
+    // Filter whitespace-only changes (pairs of removed/added with same trimmed content)
     if (options.ignoreWhitespace) {
-      filteredLines = filteredLines.filter(line => 
-        !this.isWhitespaceOnlyLine(line)
-      );
+      filteredLines = this.filterWhitespaceChanges(filteredLines);
     }
 
     // Filter formatter noise
     if (options.ignoreFormatterNoise) {
-      filteredLines = filteredLines.filter(line => 
+      filteredLines = filteredLines.filter(line =>
         !this.isFormatterNoise(line)
       );
     }
@@ -305,6 +359,61 @@ export class DiffFilter {
       lines: filteredLines,
       context: this.generateChunkContext(filteredLines),
     };
+  }
+
+  /**
+   * Filter whitespace-only changes by detecting removed/added pairs with identical trimmed content
+   */
+  private filterWhitespaceChanges(lines: GitLine[]): GitLine[] {
+    const result: GitLine[] = [];
+    const toSkip = new Set<number>();
+
+    for (let i = 0; i < lines.length; i++) {
+      if (toSkip.has(i)) continue;
+
+      const line = lines[i]!;
+
+      // Always keep context lines
+      if (line.type === 'context') {
+        result.push(line);
+        continue;
+      }
+
+      // Check if this is a whitespace-only line (empty or only whitespace)
+      if (this.isWhitespaceOnlyLine(line)) {
+        continue; // Skip it
+      }
+
+      // If this is a removed line, look ahead for matching added line
+      if (line.type === 'removed') {
+        const trimmedContent = line.content.trim();
+        let foundMatch = false;
+
+        // Look for a corresponding added line with same trimmed content
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextLine = lines[j]!;
+
+          // Stop looking if we hit a context line
+          if (nextLine.type === 'context') break;
+
+          if (nextLine.type === 'added' && nextLine.content.trim() === trimmedContent) {
+            // Found a whitespace-only change pair - skip both
+            toSkip.add(j);
+            foundMatch = true;
+            break;
+          }
+        }
+
+        if (!foundMatch) {
+          result.push(line);
+        }
+      } else {
+        // Added line - only include if not part of a pair we already skipped
+        result.push(line);
+      }
+    }
+
+    return result;
   }
 
   /**

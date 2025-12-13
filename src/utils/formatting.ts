@@ -8,9 +8,10 @@
 export function cleanText(text: string): string {
   return text
     .trim()                           // Remove leading/trailing whitespace
+    .replace(/\r\n/g, '\n')          // Normalize line endings first
     .replace(/  +/g, ' ')            // Replace multiple spaces with single space
-    .replace(/\n{3,}/g, '\n\n')      // Replace 3+ newlines with double newline
-    .replace(/\r\n/g, '\n');         // Normalize line endings
+    .replace(/ +\n/g, '\n')          // Remove trailing spaces before newlines
+    .replace(/\n{3,}/g, '\n\n');     // Replace 3+ newlines with double newline
 }
 
 /**
@@ -80,6 +81,13 @@ export function wrapContext(context: string): string {
  */
 export function wrapRules(rules: string): string {
   return wrapInBlock('RULES', rules);
+}
+
+/**
+ * Wrap git context (history + branch) in GIT_CONTEXT block
+ */
+export function wrapGitContext(gitContext: string): string {
+  return wrapInBlock('GIT_CONTEXT', gitContext, false); // Don't clean git context
 }
 
 /**

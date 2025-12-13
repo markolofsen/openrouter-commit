@@ -1,6 +1,6 @@
 {
   "name": "orcommit",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "AI-powered commit message generator - Automated git commits using OpenAI, Claude, and OpenRouter APIs with intelligent diff processing, custom prompts, and interactive regeneration",
   "keywords": [
     "git",

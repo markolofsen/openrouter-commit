@@ -1,8 +1,21 @@
+// Mock p-queue before any imports
+jest.mock('p-queue', () => {
+  return jest.fn().mockImplementation(() => ({
+    add: jest.fn((fn) => fn()),
+    pending: 0,
+    size: 0,
+    isPaused: false,
+    clear: jest.fn(),
+    onIdle: jest.fn(() => Promise.resolve()),
+  }));
+});
+
 import { CoreOrchestrator } from '../../src/modules/core.js';
 import { configManager } from '../../src/modules/config.js';
 import { gitManager } from '../../src/modules/git.js';
 import { apiManager } from '../../src/modules/api.js';
 import { cacheManager } from '../../src/modules/cache.js';
+import { diffFilter } from '../../src/modules/diff-filter.js';
 import { CliOptions } from '../../src/types/index.js';
 
 // Mock all external dependencies
@@ -17,9 +30,16 @@ const mockConfigManager = configManager as jest.Mocked<typeof configManager>;
 const mockGitManager = gitManager as jest.Mocked<typeof gitManager>;
 const mockApiManager = apiManager as jest.Mocked<typeof apiManager>;
 const mockCacheManager = cacheManager as jest.Mocked<typeof cacheManager>;
+const mockDiffFilter = diffFilter as jest.Mocked<typeof diffFilter>;
 
 describe('CoreOrchestrator Integration', () => {
   let coreOrchestrator: CoreOrchestrator;
+
+  // Define default options for all tests
+  const defaultOptions: CliOptions = {
+    verbose: false,
+    dryRun: false,
+  };
 
   beforeEach(() => {
     coreOrchestrator = new CoreOrchestrator();
@@ -46,15 +66,27 @@ describe('CoreOrchestrator Integration', () => {
     mockGitManager.getStagedFiles.mockResolvedValue([
       { path: 'src/test.ts', status: 'modified' },
     ]);
+    mockGitManager.analyzeStagedFilesSafety.mockResolvedValue({
+      riskLevel: 'safe',
+      totalFiles: 1,
+      largeFiles: 0,
+      suspiciousPatterns: [],
+      recommendations: [],
+    });
     mockConfigManager.validateConfig.mockResolvedValue(true);
+
+    // Mock diffFilter methods - they should pass through the input unchanged for most tests
+    mockDiffFilter.quickFilter.mockImplementation((diff) => diff);
+    mockDiffFilter.filterDiff.mockImplementation((diff) => diff);
+    mockDiffFilter.getFilteringSummary.mockReturnValue({
+      filesRemoved: 0,
+      linesRemoved: 0,
+      sizeReduction: '0%',
+      topRemovedReasons: [],
+    });
   });
 
   describe('generateCommit', () => {
-    const defaultOptions: CliOptions = {
-      verbose: false,
-      dryRun: false,
-    };
-
     it('should complete full workflow successfully', async () => {
       // Mock git diff
       mockGitManager.getStagedDiff.mockResolvedValue({

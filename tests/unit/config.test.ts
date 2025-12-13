@@ -24,7 +24,7 @@ const mockFs = fs as jest.Mocked<typeof fs>;
 
 describe('ConfigManager', () => {
   let configManager: ConfigManager;
-  const testConfigPath = '/tmp/test-home/.config/openrouter-commit.json';
+  const testConfigPath = '/tmp/test-home/.config/orcommit.json';
 
   beforeEach(() => {
     configManager = new ConfigManager();
@@ -107,6 +107,7 @@ describe('ConfigManager', () => {
 
     it('should create directory if it does not exist', async () => {
       const config = { ...DEFAULT_CONFIG };
+      mockFs.access.mockRejectedValue(new Error('ENOENT')); // Directory doesn't exist
       mockFs.mkdir.mockResolvedValue(undefined);
 
       await configManager.save(config);
@@ -187,7 +188,8 @@ describe('ConfigManager', () => {
       mockFs.readFile.mockResolvedValue(JSON.stringify(configWithKey));
 
       const maskedKey = await configManager.getMaskedApiKey('openrouter');
-      expect(maskedKey).toBe('sk-1************************cdef');
+      // API key is 35 chars: first 4 + (35-8=27 masked) + last 4
+      expect(maskedKey).toBe('sk-1***************************cdef');
     });
 
     it('should return "Not set" for missing API key', async () => {

@@ -34,18 +34,21 @@ const mockAxios = axios as jest.Mocked<typeof axios>;
 describe('ApiManager', () => {
   let apiManager: ApiManager;
   let mockAxiosInstance: any;
+  let errorInterceptor: ((error: any) => Promise<never>) | null = null;
 
   beforeEach(() => {
     mockAxiosInstance = {
       post: jest.fn(),
       interceptors: {
         response: {
-          use: jest.fn(),
+          use: jest.fn((successHandler, errorHandler) => {
+            errorInterceptor = errorHandler;
+          }),
         },
       },
     };
     mockAxios.create.mockReturnValue(mockAxiosInstance);
-    
+
     apiManager = new ApiManager();
     jest.clearAllMocks();
   });
@@ -76,7 +79,7 @@ describe('ApiManager', () => {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer test-openrouter-key',
-          'User-Agent': 'openrouter-commit/1.0.0',
+          'User-Agent': 'orcommit/1.0.0',
           'HTTP-Referer': 'https://github.com/markolofsen/openrouter-commit',
           'X-Title': 'OpenRouter Commit CLI',
         },
@@ -92,7 +95,7 @@ describe('ApiManager', () => {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer test-openai-key',
-          'User-Agent': 'openrouter-commit/1.0.0',
+          'User-Agent': 'orcommit/1.0.0',
         },
       });
     });
@@ -170,7 +173,12 @@ describe('ApiManager', () => {
         data: { error: { message: 'Internal server error' } },
       } as any;
 
-      mockAxiosInstance.post.mockRejectedValue(error);
+      mockAxiosInstance.post.mockImplementation(async () => {
+        if (errorInterceptor) {
+          throw await errorInterceptor(error).catch(e => e);
+        }
+        throw error;
+      });
 
       const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
 
@@ -185,7 +193,12 @@ describe('ApiManager', () => {
         data: { error: { message: 'Rate limit exceeded' } },
       } as any;
 
-      mockAxiosInstance.post.mockRejectedValue(error);
+      mockAxiosInstance.post.mockImplementation(async () => {
+        if (errorInterceptor) {
+          throw await errorInterceptor(error).catch(e => e);
+        }
+        throw error;
+      });
 
       const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
 

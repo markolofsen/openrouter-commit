@@ -154,10 +154,10 @@ export class TokenManager {
    */
   getOptimalChunkSize(model: string): number {
     const modelLimits: Record<string, number> = {
-      'gpt-4': 8192,
       'gpt-4-turbo': 128000,
-      'gpt-3.5-turbo': 4096,
+      'gpt-4': 8192,
       'gpt-3.5-turbo-16k': 16384,
+      'gpt-3.5-turbo': 4096,
       'claude-3-haiku': 200000,
       'claude-3-sonnet': 200000,
       'claude-3-opus': 200000,
@@ -166,9 +166,11 @@ export class TokenManager {
     };
 
     // Try to find exact match or partial match
-    for (const [key, limit] of Object.entries(modelLimits)) {
+    // Check longer model names first to avoid early partial matches
+    const sortedKeys = Object.keys(modelLimits).sort((a, b) => b.length - a.length);
+    for (const key of sortedKeys) {
       if (model.includes(key) || model.toLowerCase().includes(key.toLowerCase())) {
-        return Math.floor(limit * 0.7); // Use 70% of limit for safety
+        return Math.floor(modelLimits[key]! * 0.7); // Use 70% of limit for safety
       }
     }
 

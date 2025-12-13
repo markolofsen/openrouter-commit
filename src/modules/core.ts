@@ -1,7 +1,8 @@
-import { 
-  CliOptions, 
-  GitDiff, 
-  ApiRequest, 
+import {
+  CliOptions,
+  GitDiff,
+  GitFile,
+  ApiRequest,
   ProcessingResult,
   Config,
   CommitType,
@@ -18,6 +19,7 @@ import { logger, ProgressIndicator } from './logger.js';
 import { tokenManager } from './tokenizer.js';
 import { cacheManager } from './cache.js';
 import { diffFilter } from './diff-filter.js';
+import { AIFileSelector } from './file-selector.js';
 import { maybeShowPromo } from './promo.js';
 import { confirm, isCancel, text } from '@clack/prompts';
 import chalk from 'chalk';
@@ -111,12 +113,46 @@ export class CoreOrchestrator {
 
       // Phase 2: Filter and process
       const filterProgress = contextualLogger.startProgress('Processing and filtering changes');
-      let diff = diffFilter.filterDiff(rawDiff, {
-        ignoreGenerated: options.ignoreGenerated,
-        ignoreWhitespace: options.ignoreWhitespace,
-        maxFileSize: 1024 * 1024, // 1MB
-        relevancyThreshold: 0.1,
-      });
+
+      // Step 1: Quick filter to remove obvious junk
+      let diff = diffFilter.quickFilter(rawDiff);
+      filterProgress.update(`Quick filter: ${diff.files.length} files remaining`);
+
+      // Step 2: AI file selection for medium-sized commits (20-150 files)
+      if (this.shouldUseAISelection(diff.files.length)) {
+        filterProgress.update('AI analyzing file relevance...');
+
+        const fileSelector = new AIFileSelector(this.config!);
+        const maxFiles = options.maxFiles || 30;
+
+        try {
+          const selectedFiles = await fileSelector.selectRelevantFiles(diff.files, maxFiles);
+          diff = {
+            ...diff,
+            files: selectedFiles,
+            totalLines: selectedFiles.reduce((sum, file) =>
+              sum + file.chunks.reduce((chunkSum, chunk) => chunkSum + chunk.lines.length, 0), 0
+            ),
+            totalSize: selectedFiles.reduce((sum, file) =>
+              sum + JSON.stringify(file).length, 0
+            ),
+          };
+          filterProgress.update(`AI selected ${diff.files.length} most relevant files`);
+        } catch (error) {
+          contextualLogger.warn('AI file selection failed, using standard filtering');
+          // Fall through to standard filtering
+        }
+      }
+
+      // Step 3: Apply traditional filtering (for small commits or if AI selection was skipped)
+      if (!this.shouldUseAISelection(rawDiff.files.length)) {
+        diff = diffFilter.filterDiff(diff, {
+          ignoreGenerated: options.ignoreGenerated,
+          ignoreWhitespace: options.ignoreWhitespace,
+          maxFileSize: 1024 * 1024, // 1MB
+          relevancyThreshold: 0.05, // Lowered from 0.1 to reduce false filtering
+        });
+      }
 
       // Limit files if requested
       if (options.maxFiles && diff.files.length > options.maxFiles) {
@@ -135,7 +171,7 @@ export class CoreOrchestrator {
 
       const filterSummary = diffFilter.getFilteringSummary(rawDiff, diff);
       filterProgress.succeed(`Ready to analyze ${diff.files.length} files`);
-      
+
       if (filterSummary.filesRemoved > 0) {
         contextualLogger.debug(`Filtered out ${filterSummary.filesRemoved} irrelevant files`);
       }
@@ -274,9 +310,17 @@ export class CoreOrchestrator {
       
       // Prepare diff content for processing
       const rawDiffContent = this.prepareDiffContent(diff);
-      const diffContent = wrapDiffContent(rawDiffContent); // Wrap in DIFF_CONTENT block
+      let diffContent = wrapDiffContent(rawDiffContent); // Wrap in DIFF_CONTENT block
+
+      // Add git context for better understanding (history + branch)
+      const gitContext = await gitManager.getGitContextForAI(5);
+      if (gitContext) {
+        diffContent = gitContext + '\n\n' + diffContent;
+        logger.debug('Added git context to prompt', { contextLength: gitContext.length });
+      }
+
       const model = this.getModel(provider);
-      
+
       // Check cache first (unless disabled or regenerating with feedback)
       if (!options.noCache && !userFeedback) {
         const cachedMessage = await cacheManager.get(
@@ -618,6 +662,9 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
     // Add summary
     sections.push(`Summary: ${diff.files.length} files changed, ${diff.totalLines} lines modified\n`);
 
+    // Get adaptive line limit based on commit size
+    const lineLimit = this.getAdaptiveLineLimit(diff.files[0] || {} as GitFile, diff.files.length);
+
     // Add file changes
     for (const file of diff.files) {
       if (file.isBinary) {
@@ -626,23 +673,23 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
       }
 
       sections.push(`File: ${file.path} (${file.status})`);
-      
+
       for (const chunk of file.chunks) {
         if (chunk.context) {
           sections.push(`Context: ${chunk.context}`);
         }
-        
+
         const relevantLines = chunk.lines
           .filter(line => line.type === 'added' || line.type === 'removed')
-          .slice(0, 20) // Limit lines per chunk
+          .slice(0, lineLimit) // Use adaptive limit instead of hardcoded 20
           .map(line => `${line.type === 'added' ? '+' : '-'}${line.content}`)
           .join('\n');
-        
+
         if (relevantLines) {
           sections.push(relevantLines);
         }
       }
-      
+
       sections.push(''); // Empty line between files
     }
 
@@ -947,6 +994,50 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
     }
 
     return options.push || false;
+  }
+
+  /**
+   * Determine if AI file selection should be used
+   * Uses AI for medium-sized commits (20-150 files)
+   */
+  private shouldUseAISelection(fileCount: number): boolean {
+    // For very small commits, analyze all files directly
+    if (fileCount <= 20) {
+      return false;
+    }
+
+    // For huge commits, AI selection would be too slow/expensive
+    // Use heuristic instead (handled inside AIFileSelector)
+    if (fileCount > 150) {
+      return false;
+    }
+
+    // For medium commits (20-150), use AI selection
+    return true;
+  }
+
+  /**
+   * Get adaptive line limit based on commit size
+   * Larger commits get smaller preview per file to stay within token limits
+   */
+  private getAdaptiveLineLimit(file: GitFile, totalFiles: number): number {
+    // For very small commits, show almost everything
+    if (totalFiles <= 5) {
+      return 200;
+    }
+
+    // For small-medium commits, show a lot
+    if (totalFiles <= 20) {
+      return 100;
+    }
+
+    // For medium-large commits, show moderate amount
+    if (totalFiles <= 50) {
+      return 50;
+    }
+
+    // For large commits, show minimum meaningful context
+    return 30;
   }
 }
 

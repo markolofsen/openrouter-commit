@@ -36,5 +36,8 @@ export default {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     '^chalk$': '<rootDir>/tests/__mocks__/chalk.ts'
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(p-queue|eventemitter3)/)'
+  ],
   testTimeout: 10000,
 };

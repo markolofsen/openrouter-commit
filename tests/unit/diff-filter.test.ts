@@ -37,12 +37,13 @@ describe('DiffFilter', () => {
 
   describe('filterDiff', () => {
     it('should filter out generated files', () => {
+      const chunk = createMockChunk([{ type: 'added', content: 'test change' }]);
       const diff = createMockDiff([
-        { path: 'src/main.ts' },
-        { path: 'package-lock.json' },
-        { path: 'dist/bundle.js' },
-        { path: 'node_modules/lib/index.js' },
-        { path: 'coverage/report.html' },
+        { path: 'src/main.ts', chunks: [chunk] },
+        { path: 'package-lock.json', chunks: [chunk] },
+        { path: 'dist/bundle.js', chunks: [chunk] },
+        { path: 'node_modules/lib/index.js', chunks: [chunk] },
+        { path: 'coverage/report.html', chunks: [chunk] },
       ]);
 
       const filtered = diffFilter.filterDiff(diff, { ignoreGenerated: true });
@@ -52,10 +53,11 @@ describe('DiffFilter', () => {
     });
 
     it('should filter out binary files', () => {
+      const chunk = createMockChunk([{ type: 'added', content: 'test change' }]);
       const diff = createMockDiff([
-        { path: 'src/main.ts', isBinary: false },
-        { path: 'image.png', isBinary: true },
-        { path: 'document.pdf', isBinary: true },
+        { path: 'src/main.ts', isBinary: false, chunks: [chunk] },
+        { path: 'image.png', isBinary: true, chunks: [chunk] },
+        { path: 'document.pdf', isBinary: true, chunks: [chunk] },
       ]);
 
       const filtered = diffFilter.filterDiff(diff);
@@ -65,11 +67,12 @@ describe('DiffFilter', () => {
     });
 
     it('should filter out lock files when option is enabled', () => {
+      const chunk = createMockChunk([{ type: 'added', content: 'test change' }]);
       const diff = createMockDiff([
-        { path: 'src/main.ts' },
-        { path: 'package-lock.json' },
-        { path: 'yarn.lock' },
-        { path: 'Gemfile.lock' },
+        { path: 'src/main.ts', chunks: [chunk] },
+        { path: 'package-lock.json', chunks: [chunk] },
+        { path: 'yarn.lock', chunks: [chunk] },
+        { path: 'Gemfile.lock', chunks: [chunk] },
       ]);
 
       const filtered = diffFilter.filterDiff(diff, { ignoreLockFiles: true });
@@ -79,12 +82,16 @@ describe('DiffFilter', () => {
     });
 
     it('should keep lock files when option is disabled', () => {
+      const chunk = createMockChunk([{ type: 'added', content: 'test change' }]);
       const diff = createMockDiff([
-        { path: 'src/main.ts' },
-        { path: 'package-lock.json' },
+        { path: 'src/main.ts', chunks: [chunk] },
+        { path: 'package-lock.json', chunks: [chunk] },
       ]);
 
-      const filtered = diffFilter.filterDiff(diff, { ignoreLockFiles: false });
+      const filtered = diffFilter.filterDiff(diff, {
+        ignoreLockFiles: false,
+        ignoreGenerated: false  // Also disable generated files filter
+      });
 
       expect(filtered.files).toHaveLength(2);
     });
@@ -101,12 +108,16 @@ describe('DiffFilter', () => {
         { path: 'src/main.ts', chunks: [chunk] },
       ]);
 
-      const filtered = diffFilter.filterDiff(diff, { ignoreWhitespace: true });
+      const filtered = diffFilter.filterDiff(diff, {
+        ignoreWhitespace: true,
+        ignoreGenerated: false,
+        relevancyThreshold: 0  // Disable relevancy filtering for this test
+      });
 
       expect(filtered.files).toHaveLength(1);
       const filteredChunk = filtered.files[0]?.chunks[0];
       expect(filteredChunk?.lines).toHaveLength(2); // Context + real change
-      expect(filteredChunk?.lines.some(line => 
+      expect(filteredChunk?.lines.some(line =>
         line.content.includes('real change')
       )).toBe(true);
     });
@@ -122,11 +133,15 @@ describe('DiffFilter', () => {
         { path: 'src/main.ts', chunks: [chunk] },
       ]);
 
-      const filtered = diffFilter.filterDiff(diff, { ignoreFormatterNoise: true });
+      const filtered = diffFilter.filterDiff(diff, {
+        ignoreFormatterNoise: true,
+        ignoreGenerated: false,
+        relevancyThreshold: 0
+      });
 
       expect(filtered.files).toHaveLength(1);
       const filteredChunk = filtered.files[0]?.chunks[0];
-      expect(filteredChunk?.lines.some(line => 
+      expect(filteredChunk?.lines.some(line =>
         line.content.includes('newFeature')
       )).toBe(true);
     });
@@ -146,17 +161,22 @@ describe('DiffFilter', () => {
         { path: 'meaningful.ts', chunks: [meaningfulChunk] },
       ]);
 
-      const filtered = diffFilter.filterDiff(diff, { ignoreWhitespace: true });
+      const filtered = diffFilter.filterDiff(diff, {
+        ignoreWhitespace: true,
+        ignoreGenerated: false,
+        relevancyThreshold: 0
+      });
 
       expect(filtered.files).toHaveLength(1);
       expect(filtered.files[0]?.path).toBe('meaningful.ts');
     });
 
     it('should apply relevancy threshold filtering', () => {
+      const chunk = createMockChunk([{ type: 'added', content: 'test change' }]);
       const diff = createMockDiff([
-        { path: 'README.md' }, // Low relevancy
-        { path: 'src/important.ts' }, // High relevancy
-        { path: 'test.log' }, // Low relevancy
+        { path: 'README.md', chunks: [chunk] }, // Low relevancy
+        { path: 'src/important.ts', chunks: [chunk] }, // High relevancy
+        { path: 'test.log', chunks: [chunk] }, // Low relevancy
       ]);
 
       const filtered = diffFilter.filterDiff(diff, { relevancyThreshold: 0.3 });
@@ -198,9 +218,13 @@ describe('DiffFilter', () => {
     });
 
     it('should not filter source files', () => {
+      const chunk = createMockChunk([{ type: 'added', content: 'test change' }]);
       sourceFiles.forEach(path => {
-        const diff = createMockDiff([{ path }]);
-        const filtered = diffFilter.filterDiff(diff, { ignoreGenerated: true });
+        const diff = createMockDiff([{ path, chunks: [chunk] }]);
+        const filtered = diffFilter.filterDiff(diff, {
+          ignoreGenerated: true,
+          relevancyThreshold: 0
+        });
         expect(filtered.files).toHaveLength(1);
       });
     });
@@ -208,13 +232,14 @@ describe('DiffFilter', () => {
 
   describe('scoreFiles', () => {
     it('should give higher scores to source code files', () => {
+      const chunk = createMockChunk([{ type: 'added', content: 'test change' }]);
       const diff = createMockDiff([
-        { path: 'src/main.ts' },
-        { path: 'README.md' },
-        { path: 'package.json' },
+        { path: 'src/main.ts', chunks: [chunk] },
+        { path: 'README.md', chunks: [chunk] },
+        { path: 'package.json', chunks: [chunk] },
       ]);
 
-      const filtered = diffFilter.filterDiff(diff);
+      const filtered = diffFilter.filterDiff(diff, { relevancyThreshold: 0 });
 
       // TypeScript file should be first (highest score)
       expect(filtered.files[0]?.path).toBe('src/main.ts');

@@ -121,7 +121,9 @@ describe('Utils', () => {
 
   describe('maskSensitive', () => {
     it('should mask API keys correctly', () => {
-      expect(maskSensitive('sk-1234567890abcdef', 4)).toBe('sk-1********cdef');
+      // String has 19 chars: 'sk-1234567890abcdef'
+      // First 4: 'sk-1', Last 4: 'cdef', Middle: 19 - 8 = 11 chars to mask
+      expect(maskSensitive('sk-1234567890abcdef', 4)).toBe('sk-1***********cdef');
     });
 
     it('should handle short strings', () => {

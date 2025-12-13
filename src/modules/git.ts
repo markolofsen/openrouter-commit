@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GitDiff, GitFile, GitChunk, GitLine, GitError, GitFileStatus, ChunkProcessingOptions, CHUNK_LIMITS, FileSafetyAnalysis, FILE_SAFETY_LIMITS } from '../types/index.js';
 import { logger } from './logger.js';
+import { wrapGitContext } from '../utils/formatting.js';
 
 // Increase buffer size for large repositories (200MB)
 const execAsync = promisify(exec);
@@ -635,48 +636,98 @@ export class GitManager {
     riskLevel: 'safe' | 'warning' | 'critical' | 'dangerous'
   ): string[] {
     const recommendations: string[] = [];
-    
+
     if (riskLevel === 'dangerous') {
       recommendations.push('🚨 STOP: This looks like a dangerous commit!');
-      
+
       if (totalFiles > FILE_SAFETY_LIMITS.MAX_FILE_COUNT) {
         recommendations.push(`Too many files (${totalFiles}). Consider staging files in smaller batches.`);
       }
-      
+
       if (suspiciousPatterns.some(p => p.includes('node_modules'))) {
         recommendations.push('Remove node_modules from staging: git reset HEAD node_modules/');
       }
-      
+
       if (suspiciousPatterns.some(p => p.includes('vendor'))) {
         recommendations.push('Remove vendor directory from staging: git reset HEAD vendor/');
       }
     }
-    
+
     if (riskLevel === 'critical') {
       recommendations.push('⚠️  Large commit detected - please review carefully');
-      
+
       if (totalFiles > FILE_SAFETY_LIMITS.CRITICAL_FILE_COUNT) {
         recommendations.push(`Consider splitting ${totalFiles} files into multiple commits`);
       }
-      
+
       if (largeFiles > 5) {
         recommendations.push(`${largeFiles} large files detected - verify they should be committed`);
       }
     }
-    
+
     if (suspiciousPatterns.length > 0) {
       recommendations.push('Check your .gitignore file to exclude:');
       suspiciousPatterns.slice(0, 5).forEach(pattern => {
         recommendations.push(`  • ${pattern}`);
       });
     }
-    
+
     if (riskLevel !== 'safe') {
       recommendations.push('Use "git status" to review what will be committed');
       recommendations.push('Use "git reset HEAD <file>" to unstage unwanted files');
     }
-    
+
     return recommendations;
+  }
+
+  /**
+   * Get recent commit history for context
+   * @param depth Number of recent commits to retrieve (default: 5)
+   * @returns Array of commit messages in format: "hash subject"
+   */
+  async getCommitHistory(depth: number = 5): Promise<string[]> {
+    try {
+      const { stdout } = await execAsync(
+        `git log -${depth} --oneline --no-decorate`,
+        EXEC_OPTIONS
+      );
+
+      return stdout
+        .trim()
+        .split('\n')
+        .filter(line => line.trim().length > 0);
+    } catch (error) {
+      logger.debug('Failed to get commit history', error);
+      return [];
+    }
+  }
+
+  /**
+   * Format git context for AI consumption
+   * Includes recent commit history and current branch
+   * @returns Formatted git context string or empty if not available
+   */
+  async getGitContextForAI(historyDepth: number = 5): Promise<string> {
+    try {
+      const history = await this.getCommitHistory(historyDepth);
+      const branch = await this.getCurrentBranch();
+
+      if (history.length === 0) {
+        return '';
+      }
+
+      const contextContent = `Current branch: ${branch}
+
+Recent commits (for context and style reference):
+${history.map((line, i) => `${i + 1}. ${line}`).join('\n')}
+
+Note: Follow similar commit message style and format as shown above.`;
+
+      return wrapGitContext(contextContent);
+    } catch (error) {
+      logger.debug('Failed to generate git context for AI', error);
+      return '';
+    }
   }
 }
 

@@ -112,19 +112,27 @@ export class ApiManager {
 
       } catch (error) {
         logger.error(`API request failed for ${provider}`, error as Error);
-        
-        if (error instanceof ApiError && error.isRetryable) {
+
+        // Preserve the original ApiError or NetworkError
+        const apiError = error instanceof ApiError || error instanceof NetworkError
+          ? error
+          : new ApiError(
+              error instanceof Error ? error.message : 'Unknown API error',
+              undefined,
+              error instanceof Error ? error : undefined
+            );
+
+        if (apiError instanceof ApiError && apiError.isRetryable) {
           return {
             success: false,
-            error: error,
-            retryAfter: this.calculateRetryDelay(error.statusCode),
+            error: apiError,
+            retryAfter: this.calculateRetryDelay(apiError.statusCode),
           };
         }
 
         return {
           success: false,
-          error: error instanceof Error ? new ApiError(error.message, undefined, error) : 
-                 new ApiError('Unknown API error'),
+          error: apiError,
         };
       }
     }) as Promise<ProcessingResult<string>>;
@@ -288,31 +296,48 @@ export class ApiManager {
   private extractCommitMessage(response: ApiResponse, provider: string): string {
     let message = response.message.trim();
 
-    // Minimal cleanup - Stage 2 finalization will handle the rest
-    // Just normalize line endings and whitespace
+    // Normalize line endings and whitespace
     message = message.replace(/\r\n/g, '\n'); // Normalize line endings
     message = message.replace(/\n{3,}/g, '\n\n'); // Limit consecutive newlines
     message = message.trim();
-    
+
+    // Remove common AI-generated prefixes (case insensitive)
+    const prefixPatterns = [
+      /^commit message:\s*/i,
+      /^this is commit message:\s*/i,
+      /^here is the commit message:\s*/i,
+      /^the commit message is:\s*/i,
+      /^suggested commit:\s*/i,
+      /^commit:\s*/i,
+    ];
+
+    for (const pattern of prefixPatterns) {
+      message = message.replace(pattern, '');
+    }
+
+    // Remove quotes around the message
+    message = message.replace(/^["'](.+)["']$/, '$1');
+
+    // Remove leading dashes and asterisks (markdown list markers)
+    message = message.replace(/^[-*]\s+/, '');
+
+    message = message.trim();
+
     // Ensure it's not empty
     if (!message || message.length < 3) {
       throw new ApiError(`Generated commit message too short from ${provider}: "${message}"`);
     }
 
-    // Limit length (conventional commits should be concise)
-    if (message.length > 500) {
+    // Limit length to 200 characters max (conventional commit best practice)
+    if (message.length > 200) {
       logger.warn(`Commit message truncated (was ${message.length} characters)`);
-      // Try to preserve the first line (subject) and truncate the body
+      // Try to preserve the first line (subject)
       const lines = message.split('\n');
       const subject = lines[0] || '';
       if (subject.length > 200) {
         message = subject.substring(0, 197) + '...';
-      } else {
-        const remainingLength = 497 - subject.length;
-        const body = lines.slice(1).join('\n');
-        if (body.length > remainingLength) {
-          message = subject + '\n\n' + body.substring(0, remainingLength - 3) + '...';
-        }
+      } else if (message.length > 200) {
+        message = message.substring(0, 197) + '...';
       }
     }
 
