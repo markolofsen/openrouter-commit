@@ -23,6 +23,7 @@ export interface UserPreferences {
   readonly language: string;
   readonly commitFormat: 'conventional' | 'simple';
   readonly customPrompt?: string;
+  readonly maxCommitLength?: number; // Maximum commit message length in characters (0 or undefined = unlimited)
 }
 
 // Git-related types
@@ -201,6 +202,7 @@ export const DEFAULT_CONFIG: Readonly<Config> = {
     autoConfirm: false,
     language: 'en',
     commitFormat: 'conventional',
+    maxCommitLength: 800, // Reasonable limit for multi-line commits
   },
   version: '1.0.0',
 } as const;

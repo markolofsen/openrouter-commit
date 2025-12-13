@@ -506,6 +506,12 @@ THINK STEP BY STEP:
       rules += `\n- Limit description to ${options.descriptionLength} characters`;
     }
 
+    // Add max commit length constraint from config
+    const maxLength = this.config!.preferences.maxCommitLength;
+    if (maxLength && maxLength > 0) {
+      rules += `\n- ⚠️ CRITICAL LENGTH LIMIT: Total message (subject + body + footer) MUST be ${maxLength} characters or less. This is MANDATORY.`;
+    }
+
     if (options.emoji) {
       rules += `\n- Include appropriate emoji at the start of the commit message`;
     }
@@ -593,6 +599,7 @@ WRONG Examples:
     userFeedback?: string
   ): Promise<string> {
     const format = this.config!.preferences.commitFormat;
+    const maxLength = this.config!.preferences.maxCommitLength;
 
     // Create finalization prompt with structured blocks
     const instructions = `You are a commit message quality control expert.
@@ -609,8 +616,9 @@ ${userFeedback ? '\n⚠️ CRITICAL: User provided feedback. You MUST preserve t
 7. Preserve ${format === 'conventional' ? 'conventional commits format (type(scope): description)' : 'simple format'}
 8. Preserve line breaks for multi-line messages
 9. Ensure subject line is under 72 characters
-10. NO additional text, NO commentary, NO explanations
-${userFeedback ? `11. CRITICAL: Preserve the EXACT language used in the message below (user requested specific changes)` : ''}`;
+${maxLength && maxLength > 0 ? `10. ⚠️ MANDATORY LENGTH: Final message MUST be ≤${maxLength} chars total. Cut content if needed, but stay within limit.` : '10. No strict length limit on full message'}
+11. NO additional text, NO commentary, NO explanations
+${userFeedback ? `12. CRITICAL: Preserve the EXACT language used in the message below (user requested specific changes)` : ''}`;
 
     const finalizationPrompt = `${wrapInstructions(instructions)}
 

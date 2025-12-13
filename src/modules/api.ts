@@ -16,9 +16,10 @@ import { logger } from './logger.js';
 export class ApiManager {
   private readonly queue: PQueue;
   private readonly clients: Map<string, AxiosInstance> = new Map();
+  private config?: Config;
 
   constructor(concurrency: number = CHUNK_LIMITS.MAX_CONCURRENT_REQUESTS) {
-    this.queue = new PQueue({ 
+    this.queue = new PQueue({
       concurrency,
       interval: 1000, // 1 second
       intervalCap: concurrency * 2, // Allow burst capacity
@@ -32,8 +33,9 @@ export class ApiManager {
    * Initialize API client for a provider
    */
   initializeProvider(provider: 'openrouter' | 'openai', config: Config): void {
+    this.config = config; // Store config for later use
     const providerConfig = config.providers[provider];
-    
+
     if (!providerConfig.apiKey) {
       throw new ApiError(`API key not configured for ${provider}`);
     }
@@ -328,17 +330,20 @@ export class ApiManager {
       throw new ApiError(`Generated commit message too short from ${provider}: "${message}"`);
     }
 
-    // Limit length to 200 characters max (conventional commit best practice)
-    if (message.length > 200) {
-      logger.warn(`Commit message truncated (was ${message.length} characters)`);
-      // Try to preserve the first line (subject)
+    // Apply max length from config (if set) - silent truncate as fallback
+    // AI should already respect the limit, this is just a safety net
+    const maxLength = this.config?.preferences.maxCommitLength;
+    if (maxLength && maxLength > 0 && message.length > maxLength) {
+      // Silent truncate - AI should have already generated proper length
       const lines = message.split('\n');
       const subject = lines[0] || '';
-      if (subject.length > 200) {
-        message = subject.substring(0, 197) + '...';
-      } else if (message.length > 200) {
-        message = message.substring(0, 197) + '...';
+      if (subject.length > maxLength) {
+        message = subject.substring(0, maxLength - 3) + '...';
+      } else if (message.length > maxLength) {
+        message = message.substring(0, maxLength - 3) + '...';
       }
+      // Only log in debug mode
+      logger.debug(`Commit message auto-trimmed to ${maxLength} chars (AI should respect this limit)`);
     }
 
     return message;
