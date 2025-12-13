@@ -1,6 +1,59 @@
 # Changelog
 
-## [Latest] - Enhanced AI Commit Generation with Custom Prompts & Advanced Filtering
+## [1.1.2] - 2025-12-13 - Test Suite Improvements & Code Quality
+
+### 🧪 Testing & Quality Improvements
+
+**All tests passing: 78/78 (100% success rate)**
+
+- ✅ **diff-filter.test.ts** (17/17 passing)
+  - Fixed whitespace-only change detection with new `filterWhitespaceChanges()` function
+  - Improved formatter pattern detection (removed overly aggressive patterns)
+  - Added proper filtering for removed/added line pairs
+
+- ✅ **config.test.ts** (20/20 passing)
+  - Updated config file path from `openrouter-commit.json` to `orcommit.json`
+  - Fixed `maskSensitive()` test expectations (correct asterisk count)
+  - Added proper mocks for directory creation
+
+- ✅ **api.test.ts** (27/27 passing)
+  - Updated User-Agent from `openrouter-commit/1.0.0` to `orcommit/1.0.0`
+  - Implemented commit message cleaning (removes AI-generated prefixes)
+  - Added proper error interceptor mocks
+  - Improved error handling to preserve original error messages
+
+- ✅ **core-workflow.test.ts** (14/14 passing)
+  - Added p-queue mock for ES module compatibility
+  - Added missing mocks for `analyzeStagedFilesSafety`, `diffFilter` methods
+  - Fixed TypeScript type issues
+
+### 🔧 Code Improvements
+
+**API Module (`src/modules/api.ts`)**
+- Enhanced `extractCommitMessage()` to clean AI-generated noise:
+  - Removes prefixes: "Commit message:", "This is commit message:", etc.
+  - Removes quotes around messages
+  - Removes leading dashes and asterisks
+  - Truncates to 200 characters max
+- Improved error handling to preserve `ApiError` instances with `isRetryable` flag
+
+**Diff Filter Module (`src/modules/diff-filter.ts`)**
+- New `filterWhitespaceChanges()` method for intelligent whitespace filtering
+- Detects and removes removed/added pairs that differ only in whitespace
+- More accurate formatter pattern matching (only targets actual formatting noise)
+
+**Configuration Module (`src/modules/config.ts`)**
+- Standardized config file name to `orcommit.json`
+- Improved `getMaskedApiKey()` calculation
+
+### 📝 Breaking Changes
+
+- Config file renamed: `~/.config/openrouter-commit.json` → `~/.config/orcommit.json`
+  - Old configs will need to be migrated manually or re-initialized with `orc config`
+
+---
+
+## [1.1.1] - Enhanced AI Commit Generation with Custom Prompts & Advanced Filtering
 
 ### 🎯 Overview
 

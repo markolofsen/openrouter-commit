@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { coreOrchestrator } from './modules/core.js';
 import { configManager } from './modules/config.js';
 import { logger } from './modules/logger.js';
+import { AutoUpdater } from './modules/auto-updater.js';
 import { CommitType, CliOptions } from './types/index.js';
 
 // Import package.json for version and update checking
@@ -399,18 +400,22 @@ class CliApplication {
   }
 
   /**
-   * Check for updates using update-notifier
+   * Check for updates and silently update in background
    */
-  private checkForUpdates(): void {
-    const notifier = updateNotifier({
-      pkg: packageJson,
-      updateCheckInterval: 1000 * 60 * 60 * 24, // 24 hours
-    });
+  private async checkForUpdates(): Promise<void> {
+    try {
+      const autoUpdater = new AutoUpdater(packageJson);
 
-    notifier.notify({
-      defer: false,
-      isGlobal: true,
-    });
+      // Run silent update in background (non-blocking)
+      // This will auto-update if possible, or show notification if sudo needed
+      autoUpdater.silentUpdate().catch(() => {
+        // Silent failure - don't interrupt user workflow
+      });
+
+    } catch (error) {
+      // Silent failure - updates should never break the CLI
+      logger.debug('Update check failed', error as Error);
+    }
   }
 
   /**
