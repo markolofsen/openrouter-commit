@@ -250,10 +250,12 @@ export class ApiManager {
   private async makeRequest(
     client: AxiosInstance,
     request: ApiRequest,
-    provider: 'openrouter' | 'openai'
+    provider: 'openrouter' | 'openai',
+    retryCount: number = 0
   ): Promise<ApiResponse> {
     const endpoint = '/chat/completions';
-    
+    const maxRetries = 3;
+
     const payload = {
       model: request.model,
       messages: request.messages,
@@ -266,32 +268,73 @@ export class ApiManager {
       timeout: 60000,
     };
 
-    const response = await client.post(endpoint, payload, config);
-    
-    return this.parseResponse(response.data, provider);
+    try {
+      const response = await client.post(endpoint, payload, config);
+      return this.parseResponse(response.data, provider);
+    } catch (error) {
+      // Retry logic for missing choices or empty response
+      const isRetryableError = error instanceof ApiError &&
+        (error.message.includes('no choices found') ||
+         error.message.includes('no message content'));
+
+      if (isRetryableError && retryCount < maxRetries) {
+        logger.warn(`Retry attempt ${retryCount + 1}/${maxRetries} for ${provider} due to invalid response`);
+
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+
+        return this.makeRequest(client, request, provider, retryCount + 1);
+      }
+
+      throw error;
+    }
   }
 
   private parseResponse(data: any, provider: 'openrouter' | 'openai'): ApiResponse {
-    if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
-      throw new ApiError(`Invalid response format from ${provider}: no choices found`);
+    // Check for API errors first
+    if (data.error) {
+      const errorMsg = typeof data.error === 'string'
+        ? data.error
+        : (data.error.message || 'Unknown API error');
+      throw new ApiError(`${provider} API error: ${errorMsg}`);
     }
 
-    const choice = data.choices[0];
-    const message = choice.message?.content;
+    // Try to extract message from different response formats
+    let message: string | undefined;
+    let choice: any;
+    let finishReason = 'unknown';
 
-    if (!message) {
-      throw new ApiError(`Invalid response format from ${provider}: no message content`);
+    // Format 1: Standard OpenAI/OpenRouter format with choices array
+    if (data.choices && Array.isArray(data.choices) && data.choices.length > 0) {
+      choice = data.choices[0];
+      message = choice.message?.content || choice.text;
+      finishReason = choice.finish_reason || 'unknown';
+    }
+    // Format 2: Direct response format (some providers)
+    else if (data.response || data.text || data.content) {
+      message = data.response || data.text || data.content;
+      finishReason = data.finish_reason || 'complete';
+    }
+    // Format 3: Message directly in data
+    else if (data.message) {
+      message = typeof data.message === 'string' ? data.message : data.message.content;
+      finishReason = data.finish_reason || 'complete';
+    }
+
+    // If still no message found, throw error
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      throw new ApiError(`Invalid response format from ${provider}: no choices found`);
     }
 
     return {
       message,
       usage: data.usage ? {
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        totalTokens: data.usage.total_tokens,
+        promptTokens: data.usage.prompt_tokens || 0,
+        completionTokens: data.usage.completion_tokens || 0,
+        totalTokens: data.usage.total_tokens || 0,
       } : undefined,
       model: data.model || 'unknown',
-      finishReason: choice.finish_reason || 'unknown',
+      finishReason,
     };
   }
 
