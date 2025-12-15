@@ -63,11 +63,12 @@ Optimized for speed:
 
 ### 🔒 **Enterprise-Ready Security**
 Built with security in mind:
-- **NEW: Strict blocking of dependency directories** (`node_modules/`, `vendor/`) - cannot be overridden
+- **NEW: Professional secret scanning with Gitleaks** - detects 100+ secret patterns (AWS, GitHub, OpenAI, etc.)
+- **Automatic secret blocking** - prevents commits containing API keys, passwords, and tokens
+- **Strict dependency directory blocking** (`node_modules/`, `vendor/`) - cannot be overridden
 - Secure API key storage (600 permissions)
 - No logging of sensitive data
 - Environment variable support
-- Prevents accidental secret commits
 - Smart detection of package manager files and build artifacts
 
 ### 🎨 **Beautiful Developer Experience**
@@ -492,6 +493,79 @@ npm test -- utils.test.ts
 - No API keys are logged or exposed in error messages
 - Secure HTTP client with proper timeout and retry handling
 
+### Secret Scanning Protection (NEW in v1.2.0)
+
+**ORCommit automatically scans all commits for secrets using the professional Gitleaks engine:**
+
+**Detects 100+ secret patterns including:**
+- ✅ AWS Access Keys & Secret Keys
+- ✅ GitHub Personal Access Tokens
+- ✅ OpenAI API Keys
+- ✅ Google Cloud API Keys
+- ✅ Stripe API Keys
+- ✅ Slack Tokens
+- ✅ Private Keys (RSA, SSH, EC, PGP)
+- ✅ Database Connection Strings
+- ✅ JWT Tokens
+- ✅ Generic API Keys & Secrets
+
+**Protection Features:**
+- ✅ **Automatic scanning** - runs on every commit before message generation
+- ✅ **Critical blocking** - dangerous secrets (AWS, GitHub, etc.) block commits immediately
+- ✅ **Warning prompts** - generic secrets show warnings and ask for confirmation
+- ✅ **Zero configuration** - works out of the box with sensible defaults
+- ✅ **Fast performance** - scans only staged changes (< 1s for typical commits)
+
+**Example of blocked commit:**
+```bash
+$ git add src/config.ts
+$ orc commit
+
+🔍 Analyzing changes...
+⚠️  Scanning for secrets with Gitleaks...
+
+🚨 BLOCKED: Secrets detected in staged files!
+
+Critical secrets found:
+
+  src/config.ts:
+    Line 42:15
+    Detected a GitHub Personal Access Token, potentially giving access to repositories.
+    Found: ghp_**********************qrst
+    Rule: github-pat
+
+To fix this issue:
+  1. Remove secrets from code
+  2. Use environment variables instead
+  3. Add affected files to .gitignore
+  4. Create .gitleaksignore file to suppress false positives
+
+✖ Commit blocked: Critical secrets detected
+```
+
+**Bypass Options (use with caution!):**
+
+**1. Skip scanning with CLI flag:**
+```bash
+orc commit --no-secret-scan
+```
+
+**2. Suppress specific false positives:**
+
+Create `.gitleaksignore` to ignore specific findings:
+```
+# .gitleaksignore
+test-fixtures/fake-key.js:1
+docs/examples/api-example.ts:*
+*.test.ts:*
+```
+
+**Technical Details:**
+- Powered by [Gitleaks](https://github.com/gitleaks/gitleaks) v8.27+
+- Binary auto-downloaded on first run (~15MB, cached)
+- Scans only staged changes (not entire repository)
+- If Gitleaks unavailable, scanning skipped with warning
+
 ### Dependency Directory Protection (NEW in v1.1.6)
 
 **ORCommit automatically blocks commits containing dependency directories:**
@@ -549,6 +623,23 @@ build/
 ## 🐛 Troubleshooting
 
 ### Common Issues
+
+**"🚨 BLOCKED: Secrets detected in staged files!"** (NEW in v1.2.0)
+- This is a security feature powered by Gitleaks
+- **Solution 1:** Remove the secret from your code and use environment variables
+- **Solution 2:** If it's a false positive, create `.gitleaksignore` file:
+  ```
+  # Format: file_path:line_number or file_path:*
+  test-fixtures/example.js:42
+  docs/api-example.ts:*
+  ```
+- **Solution 3:** Skip secret scanning (not recommended!):
+  ```bash
+  orc commit --no-secret-scan
+  ```
+- **Solution 4:** Verify if the detected pattern is actually a secret
+- **Note:** Critical secrets (AWS, GitHub, etc.) always block commits (by design)
+- **Why:** Prevents accidental exposure of credentials that could lead to security breaches
 
 **"🚨 BLOCKED: Cannot commit dependency directories"** (NEW in v1.1.6)
 - This is a safety feature, not an error

@@ -21,6 +21,7 @@ import { cacheManager } from './cache.js';
 import { diffFilter } from './diff-filter.js';
 import { AIFileSelector } from './file-selector.js';
 import { maybeShowPromo } from './promo.js';
+import { secretScanner } from './secret-scanner.js';
 import { confirm, isCancel, text } from '@clack/prompts';
 import chalk from 'chalk';
 import {
@@ -175,6 +176,93 @@ export class CoreOrchestrator {
       if (filterSummary.filesRemoved > 0) {
         contextualLogger.debug(`Filtered out ${filterSummary.filesRemoved} irrelevant files`);
       }
+
+      // Phase 2.5: Secret scanning (skip if --no-secret-scan flag is set)
+      if (options.secretScan !== false) {
+        filterProgress.update('Scanning for secrets with Gitleaks');
+
+        try {
+          const scanResult = await secretScanner.scanStagedChanges();
+
+        if (scanResult.criticalSecrets.length > 0) {
+          filterProgress.fail(`Secrets detected (${scanResult.criticalSecrets.length} critical)`);
+
+          console.log(chalk.red('\n🚨 BLOCKED: Secrets detected in staged files!\n'));
+          console.log(chalk.yellow('Critical secrets found:\n'));
+
+          // Group by file
+          const secretsByFile = new Map<string, typeof scanResult.criticalSecrets>();
+          scanResult.criticalSecrets.forEach(secret => {
+            if (!secretsByFile.has(secret.file)) {
+              secretsByFile.set(secret.file, []);
+            }
+            secretsByFile.get(secret.file)!.push(secret);
+          });
+
+          // Display grouped by file
+          secretsByFile.forEach((secrets, file) => {
+            console.log(chalk.yellow(`  ${file}:`));
+            secrets.forEach(secret => {
+              console.log(chalk.gray(`    Line ${secret.line}:${secret.column}`));
+              console.log(chalk.gray(`    ${secret.message}`));
+              if (secret.data) {
+                console.log(chalk.gray(`    Found: ${secret.data}`));
+              }
+              console.log(chalk.gray(`    Rule: ${secret.ruleId}\n`));
+            });
+          });
+
+          console.log(chalk.gray('To fix this issue:'));
+          console.log(chalk.gray('  1. Remove secrets from code'));
+          console.log(chalk.gray('  2. Use environment variables instead'));
+          console.log(chalk.gray('  3. Add affected files to .gitignore'));
+          console.log(chalk.gray('  4. Create .gitleaksignore file to suppress false positives'));
+          console.log(chalk.gray('  5. Or skip secret scan: orc commit --no-secret-scan (not recommended!)\n'));
+
+          throw new GitError('Commit blocked: Critical secrets detected');
+        }
+
+        // Show warnings if any
+        if (scanResult.warnings.length > 0) {
+          contextualLogger.warn(`Found ${scanResult.warnings.length} potential secrets (warnings)`);
+
+          if (!options.yes) {
+            console.log(chalk.yellow('\n⚠️  Warning: Potential secrets detected\n'));
+
+            scanResult.warnings.slice(0, 3).forEach(secret => {
+              console.log(chalk.yellow(`  ${secret.file}:${secret.line}`));
+              console.log(chalk.gray(`  ${secret.message}\n`));
+            });
+
+            if (scanResult.warnings.length > 3) {
+              console.log(chalk.gray(`  ... and ${scanResult.warnings.length - 3} more\n`));
+            }
+
+            const proceed = await confirm({
+              message: 'Continue with commit?',
+              initialValue: false
+            });
+
+            if (isCancel(proceed) || !proceed) {
+              throw new GitError('Commit cancelled: User declined due to secret warnings');
+            }
+          }
+        } else {
+          filterProgress.succeed(`Ready to analyze ${diff.files.length} files (no secrets detected)`);
+        }
+      } catch (error) {
+        if (error instanceof GitError) {
+          throw error; // Re-throw blocking errors
+        }
+        // If secret scanning fails, log but don't block commit
+        contextualLogger.warn(`Secret scanning failed: ${(error as Error).message}`);
+        filterProgress.succeed(`Ready to analyze ${diff.files.length} files (scan skipped)`);
+      }
+    } else {
+      // Secret scanning disabled by --no-secret-scan flag
+      contextualLogger.warn('Secret scanning disabled by --no-secret-scan flag');
+      filterProgress.succeed(`Ready to analyze ${diff.files.length} files (secret scan disabled)`);
+    }
 
       // Phase 3: Generate commit message
       const provider = options.provider || this.config.preferences.defaultProvider;

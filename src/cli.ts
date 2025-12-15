@@ -55,6 +55,8 @@ class CliApplication {
       // Filtering options
       .option('--ignore-generated', 'Ignore auto-generated files', true)
       .option('--ignore-whitespace', 'Ignore whitespace-only changes', true)
+      // Security options
+      .option('--no-secret-scan', 'Skip secret scanning (use with caution!)')
       // Caching options
       .option('--no-cache', 'Disable caching', false)
       .option('--clear-cache', 'Clear cache before generating', false)

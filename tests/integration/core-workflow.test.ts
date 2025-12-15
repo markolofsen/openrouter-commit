@@ -16,6 +16,7 @@ import { gitManager } from '../../src/modules/git.js';
 import { apiManager } from '../../src/modules/api.js';
 import { cacheManager } from '../../src/modules/cache.js';
 import { diffFilter } from '../../src/modules/diff-filter.js';
+import { secretScanner } from '../../src/modules/secret-scanner.js';
 import { CliOptions } from '../../src/types/index.js';
 
 // Mock all external dependencies
@@ -25,12 +26,14 @@ jest.mock('../../src/modules/api.js');
 jest.mock('../../src/modules/cache.js');
 jest.mock('../../src/modules/tokenizer.js');
 jest.mock('../../src/modules/diff-filter.js');
+jest.mock('../../src/modules/secret-scanner.js');
 
 const mockConfigManager = configManager as jest.Mocked<typeof configManager>;
 const mockGitManager = gitManager as jest.Mocked<typeof gitManager>;
 const mockApiManager = apiManager as jest.Mocked<typeof apiManager>;
 const mockCacheManager = cacheManager as jest.Mocked<typeof cacheManager>;
 const mockDiffFilter = diffFilter as jest.Mocked<typeof diffFilter>;
+const mockSecretScanner = secretScanner as jest.Mocked<typeof secretScanner>;
 
 describe('CoreOrchestrator Integration', () => {
   let coreOrchestrator: CoreOrchestrator;
@@ -83,6 +86,15 @@ describe('CoreOrchestrator Integration', () => {
       linesRemoved: 0,
       sizeReduction: '0%',
       topRemovedReasons: [],
+    });
+
+    // Mock secretScanner - by default no secrets detected
+    mockSecretScanner.scanStagedChanges = jest.fn().mockResolvedValue({
+      secrets: [],
+      criticalSecrets: [],
+      warnings: [],
+      filesScanned: 0,
+      filesWithIssues: 0,
     });
   });
 
@@ -395,6 +407,148 @@ describe('CoreOrchestrator Integration', () => {
         }),
         'openrouter'
       );
+    });
+  });
+
+  describe('Secret Scanning', () => {
+    beforeEach(() => {
+      // Default: no secrets detected
+      mockSecretScanner.scanStagedChanges = jest.fn().mockResolvedValue({
+        secrets: [],
+        criticalSecrets: [],
+        warnings: [],
+        filesScanned: 0,
+        filesWithIssues: 0,
+      });
+    });
+
+    it('should block commit when critical secrets detected', async () => {
+      mockSecretScanner.scanStagedChanges = jest.fn().mockResolvedValue({
+        secrets: [
+          {
+            file: 'src/config.ts',
+            line: 10,
+            column: 5,
+            message: 'GitHub Personal Access Token detected',
+            ruleId: 'github-pat',
+            severity: 'error',
+            data: 'ghp_****',
+          },
+        ],
+        criticalSecrets: [
+          {
+            file: 'src/config.ts',
+            line: 10,
+            column: 5,
+            message: 'GitHub Personal Access Token detected',
+            ruleId: 'github-pat',
+            severity: 'error',
+            data: 'ghp_****',
+          },
+        ],
+        warnings: [],
+        filesScanned: 1,
+        filesWithIssues: 1,
+      });
+
+      await coreOrchestrator.initialize();
+
+      await expect(coreOrchestrator.generateCommit(defaultOptions)).rejects.toThrow(
+        'Commit blocked: Critical secrets detected'
+      );
+
+      expect(mockSecretScanner.scanStagedChanges).toHaveBeenCalled();
+      expect(mockApiManager.generateCommitMessage).not.toHaveBeenCalled();
+      expect(mockGitManager.createCommit).not.toHaveBeenCalled();
+    });
+
+    it('should allow commit when no secrets detected', async () => {
+      mockSecretScanner.scanStagedChanges = jest.fn().mockResolvedValue({
+        secrets: [],
+        criticalSecrets: [],
+        warnings: [],
+        filesScanned: 1,
+        filesWithIssues: 0,
+      });
+
+      const mockConfirmCommit = jest.fn().mockResolvedValue(true);
+      (coreOrchestrator as any).confirmCommit = mockConfirmCommit;
+
+      await coreOrchestrator.initialize();
+      await coreOrchestrator.generateCommit(defaultOptions);
+
+      expect(mockSecretScanner.scanStagedChanges).toHaveBeenCalled();
+      expect(mockApiManager.generateCommitMessage).toHaveBeenCalled();
+      expect(mockGitManager.createCommit).toHaveBeenCalled();
+    });
+
+    it('should skip secret scanning when --no-secret-scan flag is set', async () => {
+      const mockConfirmCommit = jest.fn().mockResolvedValue(true);
+      (coreOrchestrator as any).confirmCommit = mockConfirmCommit;
+
+      await coreOrchestrator.initialize();
+      await coreOrchestrator.generateCommit({ ...defaultOptions, secretScan: false });
+
+      expect(mockSecretScanner.scanStagedChanges).not.toHaveBeenCalled();
+      expect(mockApiManager.generateCommitMessage).toHaveBeenCalled();
+      expect(mockGitManager.createCommit).toHaveBeenCalled();
+    });
+
+    it('should handle warning-level secrets with user confirmation', async () => {
+      mockSecretScanner.scanStagedChanges = jest.fn().mockResolvedValue({
+        secrets: [
+          {
+            file: 'src/utils.ts',
+            line: 5,
+            column: 10,
+            message: 'Generic API key detected',
+            ruleId: 'generic-api-key',
+            severity: 'warning',
+            data: 'api_****',
+          },
+        ],
+        criticalSecrets: [],
+        warnings: [
+          {
+            file: 'src/utils.ts',
+            line: 5,
+            column: 10,
+            message: 'Generic API key detected',
+            ruleId: 'generic-api-key',
+            severity: 'warning',
+            data: 'api_****',
+          },
+        ],
+        filesScanned: 1,
+        filesWithIssues: 1,
+      });
+
+      const mockConfirmCommit = jest.fn().mockResolvedValue(true);
+      (coreOrchestrator as any).confirmCommit = mockConfirmCommit;
+
+      await coreOrchestrator.initialize();
+      await coreOrchestrator.generateCommit(defaultOptions);
+
+      expect(mockSecretScanner.scanStagedChanges).toHaveBeenCalled();
+      // With warnings, should still proceed if --yes is true or user confirms
+      expect(mockApiManager.generateCommitMessage).toHaveBeenCalled();
+    });
+
+    it('should handle secret scanning failure gracefully', async () => {
+      mockSecretScanner.scanStagedChanges = jest.fn().mockRejectedValue(
+        new Error('Gitleaks binary not found')
+      );
+
+      const mockConfirmCommit = jest.fn().mockResolvedValue(true);
+      (coreOrchestrator as any).confirmCommit = mockConfirmCommit;
+
+      await coreOrchestrator.initialize();
+      await coreOrchestrator.generateCommit(defaultOptions);
+
+      // Should continue with commit even if scanning fails
+      expect(mockSecretScanner.scanStagedChanges).toHaveBeenCalled();
+      expect(mockApiManager.generateCommitMessage).toHaveBeenCalled();
+      expect(mockGitManager.createCommit).toHaveBeenCalled();
     });
   });
 });

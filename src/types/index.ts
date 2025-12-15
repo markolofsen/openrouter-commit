@@ -103,6 +103,8 @@ export interface CliOptions {
   readonly maxFiles?: number;
   readonly ignoreGenerated?: boolean;
   readonly ignoreWhitespace?: boolean;
+  // Security options
+  readonly secretScan?: boolean; // false = skip secret scanning
   // Caching options
   readonly noCache?: boolean;
   readonly clearCache?: boolean;

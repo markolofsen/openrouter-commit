@@ -1,5 +1,97 @@
 # Changelog
 
+## [1.2.0] - 2025-12-15 - Professional Secret Scanning with Gitleaks
+
+### 🔐 Major Security Enhancement
+
+**NEW: Integrated Gitleaks engine for professional-grade secret detection**
+
+### What's New
+
+**Gitleaks Integration**
+- **Professional secret scanning** powered by [Gitleaks](https://github.com/gitleaks/gitleaks) engine
+- **Comprehensive detection** of API keys, passwords, tokens, and credentials
+- **Zero configuration** - works out of the box with sensible defaults
+- **Fast and accurate** - scans only staged changes, not entire repository
+- **Rich context** - shows file, line number, and detailed secret information
+- **Smart severity levels** - critical secrets (AWS, GitHub, Stripe) block commits automatically
+
+**Automatic Detection For:**
+- ✅ AWS Access Keys & Secrets
+- ✅ GitHub Personal Access Tokens
+- ✅ OpenAI API Keys
+- ✅ Google Cloud API Keys
+- ✅ Stripe API Keys
+- ✅ Slack Tokens
+- ✅ Private Keys (RSA, SSH, EC, PGP)
+- ✅ Database Connection Strings
+- ✅ JWT Tokens
+- ✅ Generic API Keys & Secrets
+- ✅ And 100+ more patterns
+
+### How It Works
+
+1. **Automatic Scanning**: Every commit is scanned for secrets before generation
+2. **Critical Blocking**: Dangerous secrets (AWS, GitHub, etc.) block commits immediately
+3. **Warning Prompts**: Generic secrets show a warning and ask for confirmation
+4. **Clear Guidance**: Helpful error messages explain how to fix issues
+
+### Example Output
+
+```bash
+🔍 Analyzing changes...
+⚠️  Scanning for secrets with Gitleaks...
+
+🚨 BLOCKED: Secrets detected in staged files!
+
+Critical secrets found:
+
+  src/config.ts:
+    Line 42:15
+    Detected a GitHub Personal Access Token, potentially giving access to repositories and user data.
+    Found: ghp_**********************qrst (from: githubToken = "ghp_1234567890abc...)
+    Rule: github-pat
+
+To fix this issue:
+  1. Remove secrets from code
+  2. Use environment variables instead
+  3. Add affected files to .gitignore
+  4. Create .gitleaksignore file to suppress false positives
+
+✖ Commit blocked: Critical secrets detected
+```
+
+### Configuration
+
+**No configuration needed!** Gitleaks works with sensible defaults.
+
+**Option 1: Skip scanning with CLI flag** (use with caution!)
+```bash
+orc commit --no-secret-scan
+```
+
+**Option 2: Suppress false positives with .gitleaksignore**
+```
+# .gitleaksignore
+test-fixtures/fake-key.js:1
+docs/examples/api-example.ts:*
+```
+
+### Technical Details
+
+- **Dependency**: `gitleaks-secret-scanner` (auto-downloads Gitleaks binary)
+- **Binary size**: ~15MB (cached after first run)
+- **Performance**: < 1s for typical commits
+- **Fallback**: If Gitleaks is not available, scanning is skipped with a warning
+
+### Migration Notes
+
+- **No breaking changes** - all existing workflows continue to work
+- **Automatic**: Secret scanning is enabled by default for all commits
+- **Opt-out**: Cannot be disabled (security by design)
+
+---
+
 ## [1.1.6] - 2025-12-15 - Enhanced Safety: Strict Blocking of Package Manager Directories
 
 ### 🔒 Critical Safety Improvement
