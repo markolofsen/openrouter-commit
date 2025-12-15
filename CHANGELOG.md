@@ -1,5 +1,99 @@
 # Changelog
 
+## [1.1.6] - 2025-12-15 - Enhanced Safety: Strict Blocking of Package Manager Directories
+
+### 🔒 Critical Safety Improvement
+
+**IMPORTANT: This update prevents accidental commits of dependency directories (`node_modules/`, `vendor/`, etc.)**
+
+### What's New
+
+**Strict Dependency Directory Blocking**
+- **ALWAYS blocks** commits containing `node_modules/`, `vendor/`, or `bower_components/`
+- Cannot be overridden even with `--yes` flag (by design for safety)
+- Shows clear error messages with step-by-step fix instructions
+- Detects package manager directories early in the commit process
+
+### Why This Matters
+
+Committing dependency directories is a common mistake that can:
+- Bloat repository size significantly (sometimes by gigabytes)
+- Cause merge conflicts in teams
+- Slow down git operations
+- Expose security vulnerabilities
+- Violate best practices
+
+### How It Works
+
+When you attempt to commit with staged dependency directories:
+
+```
+🚨 BLOCKED: Cannot commit dependency directories
+
+The following were detected in staging area:
+  • node_modules directory detected
+  • pnpm store directory detected
+
+To fix this issue:
+  1. Unstage unwanted files: git reset HEAD node_modules/
+  2. Update your .gitignore file
+  3. Stage only the files you want to commit
+```
+
+**The commit is blocked immediately** - protecting your repository.
+
+### Technical Changes
+
+**Modified Files:**
+
+1. **`src/modules/core.ts:917-985`** - Enhanced `handleSafetyCheck()` method
+   - Added special handling for package manager directories
+   - Strict blocking that cannot be overridden with `--yes`
+   - Clear, actionable error messages with fix instructions
+   - Detects patterns: `node_modules/`, `vendor/`, `bower_components/`, `.pnpm/`
+
+### Upgrade Notes
+
+**No breaking changes** - this is a pure safety enhancement.
+
+If you intentionally need to commit dependencies (e.g., vendoring for deployment):
+1. This is generally not recommended
+2. If absolutely necessary, manually commit without using `orc`
+3. Consider alternative approaches like Docker or build artifacts
+
+### Configuration
+
+No configuration needed - works automatically out of the box.
+
+To check what files are staged:
+```bash
+git status
+```
+
+To unstage unwanted directories:
+```bash
+git reset HEAD node_modules/
+git reset HEAD vendor/
+```
+
+### Best Practices
+
+Always maintain a proper `.gitignore`:
+```gitignore
+# Dependencies
+node_modules/
+.pnpm/
+bower_components/
+vendor/
+
+# Build outputs
+dist/
+build/
+.next/
+```
+
+---
+
 ## [1.1.2] - 2025-12-13 - Test Suite Improvements & Code Quality
 
 ### 🧪 Testing & Quality Improvements

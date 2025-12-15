@@ -90,7 +90,7 @@ export class GitManager {
   async getStagedFiles(): Promise<Array<{ path: string; status: GitFileStatus }>> {
     try {
       const { stdout } = await execAsync('git diff --cached --name-status', EXEC_OPTIONS);
-      
+
       return stdout
         .trim()
         .split('\n')

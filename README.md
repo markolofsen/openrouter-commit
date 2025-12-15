@@ -63,10 +63,12 @@ Optimized for speed:
 
 ### 🔒 **Enterprise-Ready Security**
 Built with security in mind:
+- **NEW: Strict blocking of dependency directories** (`node_modules/`, `vendor/`) - cannot be overridden
 - Secure API key storage (600 permissions)
 - No logging of sensitive data
 - Environment variable support
 - Prevents accidental secret commits
+- Smart detection of package manager files and build artifacts
 
 ### 🎨 **Beautiful Developer Experience**
 Polished UI/UX:
@@ -485,13 +487,75 @@ npm test -- utils.test.ts
 
 ## 🔐 Security
 
+### API Key Security
 - API keys are stored with 600 file permissions (owner read/write only)
 - No API keys are logged or exposed in error messages
 - Secure HTTP client with proper timeout and retry handling
 
+### Dependency Directory Protection (NEW in v1.1.6)
+
+**ORCommit automatically blocks commits containing dependency directories:**
+
+- `node_modules/` - npm/yarn/pnpm dependencies
+- `vendor/` - Composer/Go dependencies
+- `bower_components/` - Bower dependencies
+- `.pnpm/` - pnpm store
+
+**This protection:**
+- ✅ **Always active** - cannot be disabled even with `--yes` flag
+- ✅ **Prevents repository bloat** - saves gigabytes of space
+- ✅ **Avoids merge conflicts** - keeps your team's git history clean
+- ✅ **Follows best practices** - dependencies should never be committed
+
+**Example of blocked commit:**
+```bash
+$ git add .
+$ orc commit
+
+🚨 BLOCKED: Cannot commit dependency directories
+
+The following were detected in staging area:
+  • node_modules directory detected
+
+To fix this issue:
+  1. Unstage unwanted files: git reset HEAD node_modules/
+  2. Update your .gitignore file
+  3. Stage only the files you want to commit
+```
+
+**Why this matters:**
+Accidentally committing `node_modules/` is one of the most common Git mistakes. It can:
+- Increase repository size by gigabytes
+- Cause merge conflicts in team environments
+- Slow down git operations significantly
+- Expose outdated or vulnerable dependencies
+- Violate industry best practices
+
+**Recommended .gitignore:**
+```gitignore
+# Dependencies
+node_modules/
+.pnpm/
+bower_components/
+vendor/
+
+# Build outputs
+dist/
+build/
+.next/
+.nuxt/
+```
+
 ## 🐛 Troubleshooting
 
 ### Common Issues
+
+**"🚨 BLOCKED: Cannot commit dependency directories"** (NEW in v1.1.6)
+- This is a safety feature, not an error
+- **Solution 1:** Unstage the directories: `git reset HEAD node_modules/ vendor/`
+- **Solution 2:** Add them to `.gitignore` and stage only source files
+- **Note:** This block cannot be overridden with `--yes` (by design)
+- **Why:** Committing dependencies is a common mistake that bloats repositories
 
 **"Not in a git repository"**
 - Ensure you're running the command inside a Git repository

@@ -86,7 +86,7 @@ export class CoreOrchestrator {
       analyzeProgress.update('Checking file safety');
       
       await this.handleSafetyCheck(safetyAnalysis, options, contextualLogger, analyzeProgress);
-      
+
       analyzeProgress.update('Reading staged changes');
       
       const rawDiff = await gitManager.getStagedDiff({
@@ -915,39 +915,71 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
    * Handle safety check for staged files
    */
   private async handleSafetyCheck(
-    analysis: FileSafetyAnalysis, 
-    options: CliOptions, 
+    analysis: FileSafetyAnalysis,
+    options: CliOptions,
     contextualLogger: typeof logger,
     progress?: ProgressIndicator
   ): Promise<void> {
-    const { riskLevel, totalFiles, recommendations } = analysis;
-    
+    const { riskLevel, totalFiles, recommendations, suspiciousPatterns } = analysis;
+
     // Only show messages for non-safe commits
     if (riskLevel === 'safe') {
       return; // Silent for safe commits
     }
-    
+
     // Handle dangerous commits - block immediately
     if (riskLevel === 'dangerous') {
+      // Check if it's specifically node_modules/vendor issue
+      const hasPackageManagerFiles = suspiciousPatterns.some(pattern =>
+        pattern.includes('node_modules') ||
+        pattern.includes('vendor') ||
+        pattern.includes('bower_components')
+      );
+
+      // ALWAYS block node_modules commits, even with --yes
+      if (hasPackageManagerFiles) {
+        // Stop progress before showing error
+        if (progress) {
+          progress.fail(`Dangerous commit detected: package manager directories staged`);
+        }
+
+        console.log(chalk.red('\n🚨 BLOCKED: Cannot commit dependency directories\n'));
+        console.log(chalk.yellow('The following were detected in staging area:'));
+
+        // Show specific patterns detected
+        const packagePatterns = suspiciousPatterns.filter(p =>
+          p.includes('node_modules') || p.includes('vendor') || p.includes('bower_components')
+        );
+        packagePatterns.forEach(pattern => {
+          console.log(chalk.yellow(`  • ${pattern}`));
+        });
+
+        console.log(chalk.gray('\nTo fix this issue:'));
+        console.log(chalk.gray('  1. Unstage unwanted files: git reset HEAD node_modules/'));
+        console.log(chalk.gray('  2. Update your .gitignore file'));
+        console.log(chalk.gray('  3. Stage only the files you want to commit\n'));
+
+        throw new GitError('Commit blocked: dependency directories should not be committed');
+      }
+
+      // For other dangerous commits, respect --yes flag
       if (options.yes) {
         return; // Silent proceed with --yes
       }
-      
+
       // Stop progress before showing error
       if (progress) {
         progress.fail(`Dangerous commit detected (${totalFiles} files)`);
       }
-      
+
       // Show only the most important recommendations
-      const criticalRecs = recommendations.filter(rec => 
-        rec.includes('node_modules') || rec.includes('vendor') || rec.includes('STOP')
-      );
+      const criticalRecs = recommendations.filter(rec => rec.includes('STOP'));
       if (criticalRecs.length > 0) {
         criticalRecs.slice(0, 2).forEach(rec => {
           console.log(chalk.yellow(`   ${rec}`));
         });
       }
-      
+
       console.log(chalk.gray('Use --yes to override or fix staging area first.\n'));
       throw new GitError('Dangerous commit blocked for safety');
     }
