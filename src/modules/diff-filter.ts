@@ -314,8 +314,8 @@ export class DiffFilter {
       .map(chunk => this.filterChunk(chunk, options))
       .filter((chunk): chunk is GitChunk => chunk !== null);
 
-    // Skip files with no relevant chunks
-    if (filteredChunks.length === 0) {
+    // Skip files with no relevant chunks (unless it's a rename/copy which might not have content changes)
+    if (filteredChunks.length === 0 && file.status !== 'renamed' && file.status !== 'copied') {
       return null;
     }
 

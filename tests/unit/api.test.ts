@@ -35,6 +35,9 @@ describe('ApiManager', () => {
   let apiManager: ApiManager;
   let mockAxiosInstance: any;
   let errorInterceptor: ((error: any) => Promise<never>) | null = null;
+  
+  // Increase timeout for retry tests (1s + 2s + 4s = 7s delay per test)
+  jest.setTimeout(30000);
 
   beforeEach(() => {
     mockAxiosInstance = {
@@ -356,6 +359,16 @@ describe('ApiManager', () => {
 
       mockAxiosInstance.post.mockResolvedValue({ data: mockResponse });
 
+      const configWithLimit = {
+        ...mockConfig,
+        preferences: {
+          ...mockConfig.preferences,
+          maxCommitLength: 200,
+        },
+      };
+      
+      apiManager.initializeProvider('openrouter', configWithLimit);
+
       const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
 
       expect(result.success).toBe(true);
@@ -547,7 +560,8 @@ describe('ApiManager', () => {
       }, 'openrouter');
 
       expect(result.success).toBe(false);
-      expect(result.error?.message).toContain('no message content');
+      expect(result.error?.message).toContain('Invalid response format');
+      expect(result.error?.message).toContain('no choices found');
     });
   });
 });
