@@ -101,7 +101,7 @@ orc commit --breaking      # breaking change
 orc commit --dry-run       # preview only
 ```
 
-👉 Full CLI reference: `docs/cli.md`
+👉 [Full CLI reference](https://github.com/markolofsen/openrouter-commit/blob/main/docs/cli.md)
 
 ---
 
@@ -115,7 +115,7 @@ ORCommit includes **mandatory security checks**:
 
 These checks run **before** commit creation and cannot be bypassed accidentally.
 
-👉 Details: `docs/security.md`
+👉 [Security details](https://github.com/markolofsen/openrouter-commit/blob/main/docs/security.md)
 
 ---
 
@@ -152,10 +152,10 @@ export OPENAI_API_KEY="your-key"
 
 ## 📚 Documentation
 
-* CLI Reference → `docs/cli.md`
-* Security Model → `docs/security.md`
-* Architecture → `docs/architecture.md`
-* Advanced Usage → `docs/advanced.md`
+* [CLI Reference](https://github.com/markolofsen/openrouter-commit/blob/main/docs/cli.md)
+* [Security Model](https://github.com/markolofsen/openrouter-commit/blob/main/docs/security.md)
+* [Architecture](https://github.com/markolofsen/openrouter-commit/blob/main/docs/architecture.md)
+* [Advanced Usage](https://github.com/markolofsen/openrouter-commit/blob/main/docs/advanced.md)
 
 ---
 
