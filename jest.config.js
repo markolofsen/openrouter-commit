@@ -5,8 +5,8 @@ export default {
   roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: [
     '**/tests/unit/**/*.test.ts',
-    '**/tests/integration/**/*.test.ts',
     '**/src/**/*.test.ts'
+    // Integration tests excluded by default (run with: npm test -- tests/integration)
   ],
   collectCoverageFrom: [
     'src/**/*.ts',

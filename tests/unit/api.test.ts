@@ -35,9 +35,14 @@ describe('ApiManager', () => {
   let apiManager: ApiManager;
   let mockAxiosInstance: any;
   let errorInterceptor: ((error: any) => Promise<never>) | null = null;
-  
-  // Increase timeout for retry tests (1s + 2s + 4s = 7s delay per test)
-  jest.setTimeout(30000);
+
+  beforeAll(() => {
+    jest.useFakeTimers();
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
 
   beforeEach(() => {
     mockAxiosInstance = {
@@ -203,7 +208,10 @@ describe('ApiManager', () => {
         throw error;
       });
 
-      const result = await apiManager.generateCommitMessage(mockRequest, 'openrouter');
+      // Run with timer advancement since "rate limit" triggers retries
+      const resultPromise = apiManager.generateCommitMessage(mockRequest, 'openrouter');
+      await jest.runAllTimersAsync();
+      const result = await resultPromise;
 
       expect(result.success).toBe(false);
       expect(result.error?.isRetryable).toBe(true);
@@ -517,13 +525,16 @@ describe('ApiManager', () => {
     it('should handle malformed API responses', async () => {
       mockAxiosInstance.post.mockResolvedValue({ data: { invalid: 'response' } });
 
-      const result = await apiManager.generateCommitMessage({
+      // Parse errors trigger retries, need to advance timers
+      const resultPromise = apiManager.generateCommitMessage({
         provider: 'openrouter',
         model: 'gpt-3.5-turbo',
         messages: [],
         maxTokens: 100,
         temperature: 0.6,
       }, 'openrouter');
+      await jest.runAllTimersAsync();
+      const result = await resultPromise;
 
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('Invalid response format');
@@ -532,32 +543,38 @@ describe('ApiManager', () => {
     it('should handle empty choices array', async () => {
       mockAxiosInstance.post.mockResolvedValue({ data: { choices: [] } });
 
-      const result = await apiManager.generateCommitMessage({
+      // Parse errors trigger retries, need to advance timers
+      const resultPromise = apiManager.generateCommitMessage({
         provider: 'openrouter',
         model: 'gpt-3.5-turbo',
         messages: [],
         maxTokens: 100,
         temperature: 0.6,
       }, 'openrouter');
+      await jest.runAllTimersAsync();
+      const result = await resultPromise;
 
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('no choices found');
     });
 
     it('should handle missing message content', async () => {
-      mockAxiosInstance.post.mockResolvedValue({ 
-        data: { 
+      mockAxiosInstance.post.mockResolvedValue({
+        data: {
           choices: [{ finish_reason: 'stop' }] // Missing message
-        } 
+        }
       });
 
-      const result = await apiManager.generateCommitMessage({
+      // Parse errors trigger retries, need to advance timers
+      const resultPromise = apiManager.generateCommitMessage({
         provider: 'openrouter',
         model: 'gpt-3.5-turbo',
         messages: [],
         maxTokens: 100,
         temperature: 0.6,
       }, 'openrouter');
+      await jest.runAllTimersAsync();
+      const result = await resultPromise;
 
       expect(result.success).toBe(false);
       expect(result.error?.message).toContain('Invalid response format');

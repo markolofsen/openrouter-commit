@@ -254,7 +254,7 @@ export class ApiManager {
     retryCount: number = 0
   ): Promise<ApiResponse> {
     const endpoint = '/chat/completions';
-    const maxRetries = 3;
+    const maxRetries = 5; // Increased for overload resilience
 
     const payload = {
       model: request.model,
@@ -272,17 +272,40 @@ export class ApiManager {
       const response = await client.post(endpoint, payload, config);
       return this.parseResponse(response.data, provider);
     } catch (error) {
-      // Retry logic for missing choices or empty response
-      const isRetryableError = error instanceof ApiError &&
-        (error.message.includes('no choices found') ||
-         error.message.includes('no message content'));
+      if (!(error instanceof ApiError)) {
+        throw error;
+      }
 
-      if (isRetryableError && retryCount < maxRetries) {
-        logger.warn(`Retry attempt ${retryCount + 1}/${maxRetries} for ${provider} due to invalid response`);
+      const msg = error.message.toLowerCase();
 
-        // Wait before retry (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+      // Type 1: Parse errors (empty response) - quick retries, 3 attempts max
+      const isParseError =
+        error.message.includes('no choices found') ||
+        error.message.includes('no message content');
 
+      // Type 2: Overload errors (server busy) - longer retries, 5 attempts max
+      const isOverloadError =
+        msg.includes('overloaded') ||
+        msg.includes('temporarily unavailable') ||
+        msg.includes('service unavailable') ||
+        msg.includes('too many requests') ||
+        msg.includes('rate limit') ||
+        msg.includes('capacity') ||
+        msg.includes('try again');
+
+      if (isParseError && retryCount < 3) {
+        // Quick exponential backoff: 1s, 2s, 4s
+        const delay = 1000 * Math.pow(2, retryCount);
+        logger.warn(`Retry ${retryCount + 1}/3 for ${provider}: ${error.message} (${delay / 1000}s)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.makeRequest(client, request, provider, retryCount + 1);
+      }
+
+      if (isOverloadError && retryCount < maxRetries) {
+        // Linear backoff with cap: 2s, 4s, 6s, 8s, 10s
+        const delay = Math.min(2000 + retryCount * 2000, 10000);
+        logger.warn(`Retry ${retryCount + 1}/${maxRetries} for ${provider}: ${error.message} (${delay / 1000}s)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
         return this.makeRequest(client, request, provider, retryCount + 1);
       }
 
