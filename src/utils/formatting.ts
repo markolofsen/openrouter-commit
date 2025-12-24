@@ -91,6 +91,50 @@ export function wrapGitContext(gitContext: string): string {
 }
 
 /**
+ * Extract balanced JSON object from string
+ * Handles nested braces correctly
+ */
+function extractBalancedJson(text: string): string | null {
+  const startIdx = text.indexOf('{');
+  if (startIdx === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = startIdx; i < text.length; i++) {
+    const char = text[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (char === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+
+    if (char === '"' && !escape) {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === '{') depth++;
+      if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          return text.slice(startIdx, i + 1);
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Parse AI JSON response with fallback to plain text
  * Handles various response formats: pure JSON, markdown-wrapped, or plain text
  * @param response - AI response (should be JSON)
@@ -100,50 +144,81 @@ export function parseAIResponse(response: string): {
   assessment: string | null;
   commitMessage: string;
 } {
-  let cleanResponse = response.trim();
+  const originalResponse = response.trim();
 
-  // Remove markdown code blocks if present (```json ... ``` or ``` ... ```)
-  const codeBlockMatch = cleanResponse.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  // Strategy 1: Try to find JSON in markdown code block (```json ... ```)
+  // Use balanced extraction for nested JSON
+  const codeBlockMatch = originalResponse.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch && codeBlockMatch[1]) {
-    cleanResponse = codeBlockMatch[1].trim();
-  }
-
-  // Remove common prefixes that AI might add
-  cleanResponse = cleanResponse
-    .replace(/^(?:Here is|Here's|This is|The|A)\s+(?:the\s+)?(?:JSON|response|result)?:?\s*/i, '')
-    .trim();
-
-  try {
-    // Try to parse as JSON
-    const parsed = JSON.parse(cleanResponse);
-
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return {
-        assessment: parsed.codeAssessment || null,
-        commitMessage: parsed.commitMessage || response.trim()
-      };
-    }
-  } catch (error) {
-    // JSON parsing failed - try to extract JSON from text
-    const jsonMatch = response.match(/\{[\s\S]*"(?:codeAssessment|commitMessage)"[\s\S]*\}/);
-    if (jsonMatch) {
+    const jsonContent = extractBalancedJson(codeBlockMatch[1]);
+    if (jsonContent) {
       try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed && typeof parsed === 'object') {
+        const parsed = JSON.parse(jsonContent);
+        if (parsed && typeof parsed === 'object' && parsed.commitMessage) {
           return {
             assessment: parsed.codeAssessment || null,
-            commitMessage: parsed.commitMessage || response.trim()
+            commitMessage: parsed.commitMessage
           };
         }
       } catch {
-        // Continue to fallback
+        // Continue to next strategy
       }
     }
+  }
+
+  // Strategy 2: Try to extract JSON directly from anywhere in the response
+  const jsonFromResponse = extractBalancedJson(originalResponse);
+  if (jsonFromResponse) {
+    try {
+      const parsed = JSON.parse(jsonFromResponse);
+      if (parsed && typeof parsed === 'object' && parsed.commitMessage) {
+        return {
+          assessment: parsed.codeAssessment || null,
+          commitMessage: parsed.commitMessage
+        };
+      }
+    } catch {
+      // Continue to next strategy
+    }
+  }
+
+  // Strategy 3: Remove common prefixes and try again
+  let cleanResponse = originalResponse
+    .replace(/^(?:Here is|Here's|This is|The|A)\s+(?:a\s+)?(?:professional[,.]?\s*)?(?:comprehensive\s+)?(?:the\s+)?(?:commit\s+message|JSON|response|result)[^:]*:?\s*/i, '')
+    .trim();
+
+  // Try to parse cleaned response as JSON
+  const jsonFromClean = extractBalancedJson(cleanResponse);
+  if (jsonFromClean) {
+    try {
+      const parsed = JSON.parse(jsonFromClean);
+      if (parsed && typeof parsed === 'object' && parsed.commitMessage) {
+        return {
+          assessment: parsed.codeAssessment || null,
+          commitMessage: parsed.commitMessage
+        };
+      }
+    } catch {
+      // Continue to fallback
+    }
+  }
+
+  // Strategy 4: Try direct JSON parse of clean response
+  try {
+    const parsed = JSON.parse(cleanResponse);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return {
+        assessment: parsed.codeAssessment || null,
+        commitMessage: parsed.commitMessage || originalResponse
+      };
+    }
+  } catch {
+    // Continue to fallback
   }
 
   // Fallback: treat entire response as commit message (backward compatibility)
   return {
     assessment: null,
-    commitMessage: response.trim()
+    commitMessage: originalResponse
   };
 }
