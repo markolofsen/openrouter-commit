@@ -1017,10 +1017,9 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
 
     // Handle dangerous commits - block immediately
     if (riskLevel === 'dangerous') {
-      // Check if it's specifically node_modules/vendor issue
+      // Check if it's specifically node_modules issue (vendor allowed for Go projects)
       const hasPackageManagerFiles = suspiciousPatterns.some(pattern =>
         pattern.includes('node_modules') ||
-        pattern.includes('vendor') ||
         pattern.includes('bower_components')
       );
 
@@ -1036,7 +1035,7 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
 
         // Show specific patterns detected
         const packagePatterns = suspiciousPatterns.filter(p =>
-          p.includes('node_modules') || p.includes('vendor') || p.includes('bower_components')
+          p.includes('node_modules') || p.includes('bower_components')
         );
         packagePatterns.forEach(pattern => {
           console.log(chalk.yellow(`  • ${pattern}`));

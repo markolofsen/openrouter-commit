@@ -550,7 +550,6 @@ export class GitManager {
       { pattern: /node_modules\//, message: 'node_modules directory detected' },
       { pattern: /\.pnpm-store\//, message: 'pnpm store directory detected' },
       { pattern: /bower_components\//, message: 'bower_components directory detected' },
-      { pattern: /vendor\//, message: 'vendor directory detected' },
       
       // Build artifacts
       { pattern: /dist\/.*\.(js|css|map)$/, message: 'build artifacts detected' },
@@ -593,21 +592,20 @@ export class GitManager {
   }
 
   private determineRiskLevel(
-    totalFiles: number, 
-    largeFiles: number, 
+    totalFiles: number,
+    largeFiles: number,
     suspiciousPatterns: string[]
   ): 'safe' | 'warning' | 'critical' | 'dangerous' {
     // Dangerous: Too many files or clear signs of package directories
     if (totalFiles > FILE_SAFETY_LIMITS.MAX_FILE_COUNT) {
       return 'dangerous';
     }
-    
-    const hasPackageManagerFiles = suspiciousPatterns.some(pattern => 
-      pattern.includes('node_modules') || 
-      pattern.includes('vendor') || 
+
+    const hasPackageManagerFiles = suspiciousPatterns.some(pattern =>
+      pattern.includes('node_modules') ||
       pattern.includes('bower_components')
     );
-    
+
     if (hasPackageManagerFiles) {
       return 'dangerous';
     }
@@ -648,9 +646,6 @@ export class GitManager {
         recommendations.push('Remove node_modules from staging: git reset HEAD node_modules/');
       }
 
-      if (suspiciousPatterns.some(p => p.includes('vendor'))) {
-        recommendations.push('Remove vendor directory from staging: git reset HEAD vendor/');
-      }
     }
 
     if (riskLevel === 'critical') {

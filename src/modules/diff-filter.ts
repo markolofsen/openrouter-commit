@@ -66,9 +66,8 @@ export class DiffFilter {
     /test-results\/.*$/,
     /\.pytest_cache\/.*$/,
 
-    // Dependencies
+    // Dependencies (vendor allowed for Go projects)
     /node_modules\/.*$/,
-    /vendor\/.*$/,
     /bower_components\/.*$/,
     /\.pnp\/.*$/,
     /venv\/.*$/,
@@ -203,8 +202,8 @@ export class DiffFilter {
         return false;
       }
 
-      // Skip package manager directories
-      if (/node_modules|vendor|bower_components/.test(file.path)) {
+      // Skip package manager directories (vendor allowed for Go projects)
+      if (/node_modules|bower_components/.test(file.path)) {
         logger.debug('Quick filter: skipping package manager directory', { path: file.path });
         return false;
       }
