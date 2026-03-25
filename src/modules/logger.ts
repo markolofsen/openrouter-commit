@@ -198,6 +198,7 @@ export class Logger {
 export class ProgressIndicator {
   private interval?: NodeJS.Timeout | undefined;
   private timeoutId?: NodeJS.Timeout | undefined;
+  private maxTimeoutId?: NodeJS.Timeout | undefined;
   private frame = 0;
   private readonly frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   private startTime: number;
@@ -222,7 +223,7 @@ export class ProgressIndicator {
       }, this.minDuration);
 
       // Auto-timeout after maxDuration
-      setTimeout(() => {
+      this.maxTimeoutId = setTimeout(() => {
         if (this.interval) {
           this.fail('Operation timed out');
         }
@@ -275,6 +276,10 @@ export class ProgressIndicator {
     if (this.timeoutId) {
       clearTimeout(this.timeoutId);
       this.timeoutId = undefined;
+    }
+    if (this.maxTimeoutId) {
+      clearTimeout(this.maxTimeoutId);
+      this.maxTimeoutId = undefined;
     }
     this.isActive = false;
   }
