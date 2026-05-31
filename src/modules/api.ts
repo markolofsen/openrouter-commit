@@ -145,11 +145,11 @@ export class ApiManager {
    */
   async processChunks(
     chunks: string[],
-    baseRequest: { provider: 'openrouter' | 'openai'; model: string; maxTokens: number; temperature: number; systemPrompt: string },
+    baseRequest: { provider: 'openrouter' | 'openai'; model: string; maxTokens: number; temperature: number; systemPrompt: string; responseFormat?: Record<string, unknown> },
     provider: 'openrouter' | 'openai'
   ): Promise<ProcessingResult<string[]>> {
     try {
-      const promises = chunks.map(chunk => 
+      const promises = chunks.map(chunk =>
         this.generateCommitMessage({
           provider: baseRequest.provider,
           model: baseRequest.model,
@@ -159,6 +159,7 @@ export class ApiManager {
             { role: 'system', content: baseRequest.systemPrompt },
             { role: 'user', content: chunk }
           ],
+          responseFormat: baseRequest.responseFormat,
         }, provider)
       );
 
@@ -256,13 +257,18 @@ export class ApiManager {
     const endpoint = '/chat/completions';
     const maxRetries = 5; // Increased for overload resilience
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       model: request.model,
       messages: request.messages,
       max_tokens: request.maxTokens,
       temperature: request.temperature,
       stream: request.stream ?? false,
     };
+
+    // Constrained decoding when a structured schema is requested.
+    if (request.responseFormat) {
+      payload.response_format = request.responseFormat;
+    }
 
     const config: AxiosRequestConfig = {
       timeout: 60000,

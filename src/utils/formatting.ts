@@ -91,6 +91,44 @@ export function wrapGitContext(gitContext: string): string {
 }
 
 /**
+ * Strict `response_format` for the commit-message response.
+ *
+ * Using a json_schema block makes the provider constrain decoding: the model
+ * physically cannot return malformed JSON or omit a field. This is the robust
+ * replacement for prompting "return ONLY valid JSON" and then regex-parsing.
+ * Mirrors the strict-schema approach in django_llm's response_format module
+ * (every object closed with additionalProperties:false, all keys required).
+ *
+ * Note: not every model/provider honors json_schema. The caller still runs
+ * parseAIResponse() on the result, so a provider that ignores the schema
+ * degrades gracefully to the previous behavior.
+ */
+export const COMMIT_RESPONSE_FORMAT: Record<string, unknown> = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'commit_message',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['codeAssessment', 'commitMessage'],
+      properties: {
+        codeAssessment: {
+          type: 'string',
+          description:
+            'Brief (1-2 sentence) witty, darkly humorous assessment of THESE specific code changes.',
+        },
+        commitMessage: {
+          type: 'string',
+          description:
+            'The commit message, derived exclusively from the actual diff. No invented changes.',
+        },
+      },
+    },
+  },
+};
+
+/**
  * Extract balanced JSON object from string
  * Handles nested braces correctly
  */

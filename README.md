@@ -44,12 +44,19 @@ If you care about **clean history, security, and standards** — this tool is fo
 
 ### 🤖 AI Providers
 
-* OpenAI (GPT‑4, GPT‑3.5)
-* Claude via OpenRouter (200+ models)
+* OpenRouter (200+ models — Gemini, Claude, GPT, and more)
+* OpenAI (GPT‑4o, GPT‑4o‑mini)
 * Local models via **Ollama** (offline & private)
+
+Sensible defaults out of the box: `google/gemini-2.0-flash-lite-001` on OpenRouter
+(cheap, fast, great structured output) and `gpt-4o-mini` on OpenAI.
 
 ### 🧠 Smart Commit Generation
 
+* **Schema-constrained output** — the model is forced to return valid structured
+  JSON (json_schema / constrained decoding), so responses don't need brittle parsing
+* **Grounded in your diff** — messages describe only what the diff actually shows,
+  no invented or boilerplate changes
 * Token-aware diff chunking (large repos supported)
 * Interactive regeneration with feedback
 * Custom prompts & project context
@@ -70,7 +77,7 @@ If you care about **clean history, security, and standards** — this tool is fo
 
 ### ⚡ Fast & Reliable
 
-* Memory + disk cache
+* Per-repository memory + disk cache (no cross-project message bleed)
 * Parallel API calls
 * Strict TypeScript + comprehensive tests
 
@@ -88,6 +95,37 @@ orc commit
 
 That’s it.
 
+> **Don't use `sudo npm install -g`.** A root-owned global install creates files
+> that break every later (non-sudo) update with `EACCES`. If `npm install -g`
+> asks for elevated permissions, your npm prefix is system-owned — fix it once
+> with a user-owned prefix (no sudo ever again):
+>
+> ```bash
+> mkdir -p ~/.npm-global
+> npm config set prefix ~/.npm-global
+> echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
+> source ~/.zshrc
+> ```
+
+### Updating
+
+```bash
+npm install -g orcommit@latest
+```
+
+orc also tells you when a newer version is available. It never auto-installs and
+never asks for sudo.
+
+### Troubleshooting
+
+If `orc` reports the wrong version, won't update, or you suspect duplicate
+installs, run the built-in diagnostic — it inspects your npm prefix, every `orc`
+on your `PATH`, and the installed-vs-latest version, then prints exact fixes:
+
+```bash
+orc doctor
+```
+
 ---
 
 ## 🛠 Common Commands
@@ -99,6 +137,7 @@ orc commit --context "..." # extra context
 orc commit --emoji         # gitmoji
 orc commit --breaking      # breaking change
 orc commit --dry-run       # preview only
+orc doctor                 # diagnose install / PATH / update issues
 ```
 
 👉 [Full CLI reference](https://github.com/markolofsen/openrouter-commit/blob/main/docs/cli.md)
@@ -133,13 +172,21 @@ Config is stored at `~/.config/orcommit.json` (permissions `600`).
 
 ```json
 {
+  "providers": {
+    "openrouter": {
+      "model": "google/gemini-2.0-flash-lite-001"
+    }
+  },
   "preferences": {
     "defaultProvider": "openrouter",
     "commitFormat": "conventional",
-    "temperature": 0.6
+    "temperature": 0.3
   }
 }
 ```
+
+> A low `temperature` (default `0.3`) keeps messages grounded in the actual diff
+> and avoids drifting into generic, memorized phrasings.
 
 Environment variables are also supported:
 

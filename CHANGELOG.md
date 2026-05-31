@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.2.19] - 2026-05-31 - Commit Quality, Reliability & Self-Diagnostics
+
+### 🎯 Commit message quality (the big one)
+
+- **No more cross-project message bleed.** The commit-message cache key is now
+  scoped per repository + branch. Previously identical/trimmed diffs from
+  unrelated projects could collide on the same key and serve each other's
+  messages (the infamous "why does this repo suggest a JWT auth message"). Old
+  cache entries are no longer reused across projects.
+- **Removed the few-shot example that leaked into output.** The prompt no longer
+  contains a concrete "migrate from session-based to JWT authentication" sample
+  that the model would copy verbatim on thin diffs. The prompt now forbids
+  generic/memorized phrasings and requires every claim to be grounded in the
+  actual diff.
+- **Real diff, not a stripped fragment.** Diffs are sent with surrounding context
+  lines and hunk headers instead of a context-free list of +/- lines, so the
+  model can actually understand the change.
+- **Schema-constrained output.** Responses now use a strict `json_schema`
+  `response_format` (constrained decoding) so the model returns valid structured
+  JSON by construction; the regex parser remains as a graceful fallback.
+- Lower default `temperature` (0.6 → 0.3) to keep messages grounded.
+- Default OpenRouter model is now `google/gemini-2.0-flash-lite-001`
+  (fast, cheap, strong structured output); OpenAI default is `gpt-4o-mini`.
+
+### ⚡ Reliability & cost
+
+- **Removed the second "finalize" LLM call.** Message cleanup is now done locally
+  (deterministic), cutting ~half the tokens/latency and one failure point.
+
+### 🩺 Installation & updates
+
+- **New `orc doctor` command.** Diagnoses npm prefix ownership, duplicate `orc`
+  binaries on `PATH`, active-binary-vs-prefix mismatches, and installed-vs-latest
+  version — printing exact, copy-pasteable fixes. It never modifies your system.
+- **Safer updater.** The auto-updater no longer silently runs `npm install -g`
+  behind your back, and **never recommends `sudo`** (root-owned global installs
+  are the root cause of later `EACCES` update failures). It is now
+  notification-only.
+
+### 🐛 Fixes
+
+- `orc -v` / `--version` now prints the version and exits cleanly instead of
+  failing with a spurious `✗ CLI error`.
+- `-v` is reserved for `--version`; the commit command's verbose flag is now
+  `--verbose` (long form only), removing the flag collision.
+- Updated the stale `quickFilter` test to match the intended behavior that
+  `vendor/` is kept (for Go projects) while `node_modules/` is filtered.
+
 ## [1.2.0] - 2025-12-15 - Professional Secret Scanning with Gitleaks
 
 ### 🔐 Major Security Enhancement

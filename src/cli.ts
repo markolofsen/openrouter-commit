@@ -7,6 +7,7 @@ import { coreOrchestrator } from './modules/core.js';
 import { configManager } from './modules/config.js';
 import { logger } from './modules/logger.js';
 import { AutoUpdater } from './modules/auto-updater.js';
+import { Doctor } from './modules/doctor.js';
 import { CommitType, CliOptions } from './types/index.js';
 
 // Import package.json for version and update checking
@@ -44,7 +45,8 @@ class CliApplication {
       .option('-t, --type <type>', 'Specify commit type', this.validateCommitType)
       .option('-b, --breaking', 'Mark as breaking change', false)
       .option('-d, --dry-run', 'Generate message without creating commit', false)
-      .option('-v, --verbose', 'Enable verbose logging', false)
+      // NOTE: no -v short flag here — -v is reserved program-wide for --version.
+      .option('--verbose', 'Enable verbose logging', false)
       .option('-w, --watch', 'Watch for changes and auto-generate commits', false)
       .option('-p, --provider <provider>', 'Specify AI provider (openrouter|openai)', this.validateProvider)
       // Extended formatting options
@@ -142,6 +144,13 @@ class CliApplication {
       .description('Test API connection for provider')
       .action(async (provider?: string) => {
         await this.handleTestCommand(provider);
+      });
+
+    this.program
+      .command('doctor')
+      .description('Diagnose installation, PATH, and update issues')
+      .action(async () => {
+        await this.handleDoctorCommand();
       });
 
     // Global options
@@ -335,6 +344,21 @@ class CliApplication {
   }
 
   /**
+   * Diagnose installation / PATH / update issues and print fixes.
+   */
+  private async handleDoctorCommand(): Promise<void> {
+    try {
+      const doctor = new Doctor(packageJson.version);
+      const report = await doctor.run();
+      Doctor.print(report);
+      process.exit(report.hasProblems ? 1 : 0);
+    } catch (error) {
+      logger.error('Doctor failed', error as Error);
+      process.exit(1);
+    }
+  }
+
+  /**
    * Handle watch mode
    */
   private async handleWatchMode(options: CliOptions): Promise<void> {
@@ -408,9 +432,9 @@ class CliApplication {
     try {
       const autoUpdater = new AutoUpdater(packageJson);
 
-      // Run silent update in background (non-blocking)
-      // This will auto-update if possible, or show notification if sudo needed
-      autoUpdater.silentUpdate().catch(() => {
+      // Notification-only (non-blocking). Never auto-installs and never
+      // suggests sudo — see AutoUpdater.notifyIfUpdateAvailable for rationale.
+      autoUpdater.notifyIfUpdateAvailable().catch(() => {
         // Silent failure - don't interrupt user workflow
       });
 
@@ -460,18 +484,37 @@ class CliApplication {
     try {
       await this.program.parseAsync(process.argv);
     } catch (error: unknown) {
-      if (error instanceof Error) {
-        if (error.message.includes('outputHelp')) {
-          // Help was requested, exit normally
-          process.exit(0);
-        } else {
-          logger.error('CLI error', error);
-          process.exit(1);
+      // With program.exitOverride(), commander throws a CommanderError instead
+      // of calling process.exit(). Several of its codes are NORMAL outcomes —
+      // printing --version or --help, or an empty invocation — and must exit 0,
+      // not be reported as a "CLI error". Previously only the help path was
+      // handled, so `orc -v` printed the version and then died with exit 1 and
+      // a spurious "✗ CLI error" line.
+      const commanderError = error as { code?: string; exitCode?: number };
+      const cleanExitCodes = new Set([
+        'commander.version',
+        'commander.helpDisplayed',
+        'commander.help',
+        'commander.missingArgument', // commander already printed a usage message
+      ]);
+
+      if (commanderError && typeof commanderError.code === 'string') {
+        if (cleanExitCodes.has(commanderError.code)) {
+          process.exit(commanderError.exitCode ?? 0);
         }
+        // Other commander.* errors (e.g. unknown option) already printed a
+        // helpful message via configureOutput; exit with its code, no stack.
+        if (commanderError.code.startsWith('commander.')) {
+          process.exit(commanderError.exitCode ?? 1);
+        }
+      }
+
+      if (error instanceof Error) {
+        logger.error('CLI error', error);
       } else {
         logger.error('Unknown CLI error');
-        process.exit(1);
       }
+      process.exit(1);
     }
   }
 }

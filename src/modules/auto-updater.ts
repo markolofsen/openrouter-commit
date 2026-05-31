@@ -1,7 +1,6 @@
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
 import updateNotifier, { Package } from 'update-notifier';
 import chalk from 'chalk';
 import { logger } from './logger.js';
@@ -90,9 +89,18 @@ export class AutoUpdater {
   }
 
   /**
-   * Silently update in background (downloads to cache)
+   * Check for updates and, if one exists, print a single non-intrusive
+   * notification line. NEVER installs anything automatically.
+   *
+   * Rationale: the previous implementation silently ran `npm install -g` behind
+   * the user's back when it had write access, and recommended `sudo npm i -g`
+   * when it didn't. The sudo path is actively harmful — it creates root-owned
+   * files under the global prefix that then break every future non-sudo
+   * install (exactly the EACCES trap users hit). Updating the user's binary
+   * without consent is also surprising. So this is now notification-only, and
+   * the suggested command never contains sudo.
    */
-  async silentUpdate(): Promise<boolean> {
+  async notifyIfUpdateAvailable(): Promise<boolean> {
     try {
       const checkResult = await this.checkForUpdates();
 
@@ -103,104 +111,31 @@ export class AutoUpdater {
 
       logger.debug('Update available', {
         current: checkResult.currentVersion,
-        latest: checkResult.latestVersion
+        latest: checkResult.latestVersion,
       });
 
-      // Check if we can update globally (has sudo rights)
-      const canUpdateGlobally = await this.checkGlobalUpdatePermission();
-
-      if (canUpdateGlobally) {
-        // Update globally
-        await this.updateGlobally();
-        return true;
-      } else {
-        // Show update notification with instructions
-        this.showUpdateNotification(checkResult.latestVersion);
-        return false;
-      }
-
+      this.showUpdateNotification(checkResult.latestVersion);
+      return true;
     } catch (error) {
       // Silent failure - don't interrupt user workflow
-      logger.debug('Silent update failed', error as Error);
+      logger.debug('Update notification failed', error as Error);
       return false;
     }
   }
 
   /**
-   * Check if current process can update globally (has write access to global node_modules)
-   */
-  private async checkGlobalUpdatePermission(): Promise<boolean> {
-    try {
-      // Get global npm prefix
-      const prefix = execSync('npm config get prefix', {
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'ignore']
-      }).trim();
-
-      const globalModules = join(prefix, 'lib', 'node_modules');
-
-      // Try to access with write permission
-      await fs.access(globalModules, fs.constants.W_OK);
-      return true;
-
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Update package globally
-   */
-  private async updateGlobally(): Promise<void> {
-    try {
-      logger.info('Updating orcommit to latest version...');
-
-      // Determine package manager
-      const packageManager = await this.detectPackageManager();
-
-      const command = packageManager === 'pnpm'
-        ? 'pnpm add -g orcommit@latest'
-        : 'npm install -g orcommit@latest';
-
-      execSync(command, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        encoding: 'utf-8'
-      });
-
-      logger.info('Successfully updated orcommit!');
-
-    } catch (error) {
-      throw new Error(`Global update failed: ${(error as Error).message}`);
-    }
-  }
-
-  /**
-   * Detect package manager (npm or pnpm)
-   */
-  private async detectPackageManager(): Promise<'npm' | 'pnpm'> {
-    try {
-      execSync('pnpm --version', { stdio: 'ignore' });
-      return 'pnpm';
-    } catch {
-      return 'npm';
-    }
-  }
-
-  /**
-   * Show update notification to user
+   * Show update notification to user.
+   *
+   * The suggested command intentionally NEVER uses sudo: a sudo global install
+   * creates root-owned files that break later non-sudo installs. If the user's
+   * setup genuinely needs elevated rights, that's a sign the global prefix is
+   * misconfigured — `orc doctor` diagnoses and explains how to fix it properly.
    */
   private showUpdateNotification(latestVersion: string): void {
-    const canUseSudo = process.platform !== 'win32';
-    const packageManager = 'npm'; // Default to npm for instructions
-
     console.log('');
     logger.info(`Update available: ${this.packageJson.version} → ${latestVersion}`);
-
-    if (canUseSudo) {
-      console.log(`  Run: ${chalk.cyan(`sudo ${packageManager} install -g orcommit@latest`)}`);
-    } else {
-      console.log(`  Run: ${chalk.cyan(`${packageManager} install -g orcommit@latest`)}`);
-    }
+    console.log(`  Run: ${chalk.cyan('npm install -g orcommit@latest')}`);
+    console.log(`  ${chalk.gray('Permission error? Run')} ${chalk.cyan('orc doctor')} ${chalk.gray('for a fix.')}`);
     console.log('');
   }
 

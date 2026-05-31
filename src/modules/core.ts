@@ -31,8 +31,8 @@ import {
   wrapUserFeedback,
   wrapDiffContent,
   wrapInBlock,
-  cleanText,
-  parseAIResponse
+  parseAIResponse,
+  COMMIT_RESPONSE_FORMAT
 } from '../utils/formatting.js';
 import { createAIThinkingSpinner, createProcessingSpinner } from './spinner.js';
 
@@ -409,13 +409,17 @@ export class CoreOrchestrator {
 
       const model = this.getModel(provider);
 
+      // Repository-scoped cache key prevents cross-project collisions
+      const cacheScope = await gitManager.getCacheScope();
+
       // Check cache first (unless disabled or regenerating with feedback)
       if (!options.noCache && !userFeedback) {
         const cachedMessage = await cacheManager.get(
           rawDiffContent, // Use raw content for cache key
           model,
           provider,
-          this.config!.preferences.temperature
+          this.config!.preferences.temperature,
+          cacheScope
         );
 
         if (cachedMessage) {
@@ -446,6 +450,7 @@ export class CoreOrchestrator {
           ],
           maxTokens: this.config!.preferences.maxTokens,
           temperature: this.config!.preferences.temperature,
+          responseFormat: COMMIT_RESPONSE_FORMAT,
         };
 
         const result = await apiManager.generateCommitMessage(request, provider);
@@ -463,8 +468,10 @@ export class CoreOrchestrator {
 
         spinner.update('Polishing the message');
 
-        // Stage 2: Finalize and clean the commit message part (with user context)
-        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options, userFeedback);
+        // Clean the commit message locally — no second LLM round-trip needed.
+        // The model already returns the message inside structured JSON; we just
+        // strip artifacts (prefixes, quotes, code fences) deterministically.
+        const finalMessage = this.cleanCommitMessage(parsed.commitMessage);
 
         // Cache the finalized result (skip if regenerating with feedback)
         if (!options.noCache && !userFeedback) {
@@ -473,7 +480,8 @@ export class CoreOrchestrator {
             model,
             provider,
             this.config!.preferences.temperature,
-            finalMessage
+            finalMessage,
+            cacheScope
           );
         }
 
@@ -499,6 +507,7 @@ export class CoreOrchestrator {
           maxTokens: this.config!.preferences.maxTokens,
           temperature: this.config!.preferences.temperature,
           systemPrompt,
+          responseFormat: COMMIT_RESPONSE_FORMAT,
         };
 
         const result = await apiManager.processChunks(chunks, baseRequest, provider);
@@ -517,8 +526,8 @@ export class CoreOrchestrator {
 
         spinner.update('Polishing the message');
 
-        // Stage 2: Finalize and clean the commit message part (with user context)
-        const finalMessage = await this.finalizeCommitMessage(parsed.commitMessage, provider, options, userFeedback);
+        // Clean locally (see single-request path above) — no extra LLM call.
+        const finalMessage = this.cleanCommitMessage(parsed.commitMessage);
 
         spinner.succeed('Commit message generated');
         return {
@@ -555,15 +564,19 @@ export class CoreOrchestrator {
     // Main instructions
     const mainInstructions = `You are a senior software engineer and Git commit message expert with deep understanding of software architecture and code quality.
 
-YOUR MISSION: Analyze the git diff carefully and generate a professional, comprehensive commit message that accurately captures ALL significant changes.
+YOUR MISSION: Describe ONLY the changes present in the [DIFF_CONTENT] block below. The commit message must be derived EXCLUSIVELY from the actual diff — the literal added/removed lines and the files they touch.
 
-ANALYSIS REQUIREMENTS:
-1. THINK DEEPLY about what the code changes actually do
-2. Identify the PRIMARY purpose of the changes (feature, fix, refactor, etc.)
-3. Notice ALL important modifications - don't miss secondary changes
-4. Understand the INTENT behind the changes, not just the syntax
-5. Consider the IMPACT on the codebase (breaking changes, new features, bug fixes)
-6. Recognize patterns: new files, deletions, refactoring, configuration changes`;
+ABSOLUTE RULES (these override stylistic preferences):
+- Ground EVERY claim in a concrete line or file from the diff. If it is not in the diff, it does not go in the message.
+- NEVER invent, assume, or pattern-match a change that is not literally shown (e.g. do not say "migrate to JWT", "refactor auth", "add tests" unless those exact changes appear in the diff).
+- If the diff is small or trivial, write a small, literal message. Do NOT inflate it into something grander than the actual change.
+- Use the real file paths, function names, and symbols from the diff. Generic boilerplate is a failure.
+
+ANALYSIS STEPS:
+1. Read the actual added/removed lines per file.
+2. Identify the PRIMARY change and its concrete effect.
+3. Capture meaningful secondary changes that are actually present.
+4. Choose the conventional-commit type that matches what the lines literally do.`;
 
     sections.push(wrapInstructions(mainInstructions));
 
@@ -575,13 +588,14 @@ ANALYSIS REQUIREMENTS:
 - Use technical terminology appropriately
 - Write in ${language === 'en' ? 'English' : language}
 - Follow ${format === 'conventional' ? 'Conventional Commits format strictly' : 'simple descriptive format'}
+- Describe ONLY what the diff shows — no speculation, no generic filler
 
-THINK STEP BY STEP:
-1. What is the main change? (new feature, bug fix, refactor, etc.)
-2. What files/components are affected?
-3. Are there any breaking changes?
-4. Are there secondary important changes?
-5. What's the overall impact?`;
+THINK STEP BY STEP (about THIS diff, not commits in general):
+1. Which specific files and symbols changed, per the diff?
+2. What do the added/removed lines literally do?
+3. Are there breaking changes visible in the diff?
+4. Which secondary changes are actually present?
+5. What is the smallest accurate description of all of the above?`;
 
     // Add formatting constraints to rules
     if (options.oneLine) {
@@ -657,19 +671,10 @@ ${userFeedback ? '⚠️ CRITICAL: The [IMPORTANT_USER_FEEDBACK] block above con
    - Add detailed body if changes are complex
    - Include BREAKING CHANGE footer if applicable
 
-CRITICAL: Return ONLY a valid JSON object matching the RESPONSE_SCHEMA above.
-⚠️ DO NOT wrap in markdown code blocks (no \`\`\`json)
-⚠️ DO NOT add explanations before or after
-⚠️ START your response with { and END with }
-⚠️ This is REQUIRED - the response MUST be parseable JSON
+Return a JSON object matching the RESPONSE_SCHEMA above (two fields: codeAssessment, commitMessage).
 
-CORRECT Example:
-{"codeAssessment": "Ah yes, another 'quick fix' that touches 47 files", "commitMessage": "refactor: restructure authentication flow\\n\\nMigrate from session-based to JWT authentication"}
-
-WRONG Examples:
-- \`\`\`json {"codeAssessment": "..."} \`\`\` ❌
-- Here is the JSON: {...} ❌
-- Just plain text without JSON ❌`;
+⚠️ MOST IMPORTANT RULE: the commitMessage must describe ONLY what the [DIFF_CONTENT] literally shows.
+Never emit a generic, memorized message (e.g. "restructure X", "migrate from A to B", "implement authentication") unless those exact changes appear in the diff. If the diff is tiny, write a tiny literal message. Grounding every word in the actual diff is more important than sounding impressive.`;
 
     sections.push(wrapInstructions(finalInstructions));
 
@@ -677,76 +682,60 @@ WRONG Examples:
   }
 
   /**
-   * Finalize and clean up the commit message (Stage 2)
-   * Takes the raw AI-generated message and ensures it's perfectly formatted
+   * Clean up a commit message locally (no LLM round-trip).
+   *
+   * The message arrives already extracted from structured JSON, so cleaning is
+   * purely deterministic: strip leftover prefixes/quotes/code-fences, normalize
+   * whitespace and line endings, and enforce the configured max length. This
+   * replaces the old "Stage 2" finalization LLM call, removing ~half the token
+   * cost and latency plus a failure point, with identical end results.
    */
-  private async finalizeCommitMessage(
-    rawMessage: string,
-    provider: 'openrouter' | 'openai',
-    options: CliOptions,
-    userFeedback?: string
-  ): Promise<string> {
-    const format = this.config!.preferences.commitFormat;
-    const maxLength = this.config!.preferences.maxCommitLength;
+  private cleanCommitMessage(rawMessage: string): string {
+    let message = (rawMessage || '').replace(/\r\n/g, '\n').trim();
 
-    // Create finalization prompt with structured blocks
-    const instructions = `You are a commit message quality control expert.
-
-YOUR TASK: Clean and perfect the commit message below. Remove ANY explanatory text, prefixes, or formatting artifacts.
-${userFeedback ? '\n⚠️ CRITICAL: User provided feedback. You MUST preserve the language and style they requested!' : ''}`;
-
-    const rules = `1. Output ONLY the final commit message - nothing else
-2. Remove prefixes like "commit message:", "here is", "this is", etc.
-3. Remove surrounding quotes, backticks, or markdown
-4. Remove any explanations or comments
-5. Keep the message structure intact (subject + body + footer if present)
-6. Start directly with the commit type or message
-7. Preserve ${format === 'conventional' ? 'conventional commits format (type(scope): description)' : 'simple format'}
-8. Preserve line breaks for multi-line messages
-9. Ensure subject line is under 72 characters
-${maxLength && maxLength > 0 ? `10. ⚠️ MANDATORY LENGTH: Final message MUST be ≤${maxLength} chars total. Cut content if needed, but stay within limit.` : '10. No strict length limit on full message'}
-11. NO additional text, NO commentary, NO explanations
-${userFeedback ? `12. CRITICAL: Preserve the EXACT language used in the message below (user requested specific changes)` : ''}`;
-
-    const finalizationPrompt = `${wrapInstructions(instructions)}
-
-${wrapRules(rules)}
-
-[RAW_MESSAGE_TO_CLEAN]
-${cleanText(rawMessage)}
-[/RAW_MESSAGE_TO_CLEAN]
-
-OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
-
-    try {
-      const model = this.getModel(provider);
-
-      const result = await apiManager.generateCommitMessage(
-        {
-          provider,
-          model,
-          maxTokens: this.config!.preferences.maxTokens,
-          temperature: 0.3, // Lower temperature for more consistent cleaning
-          messages: [
-            { role: 'system', content: finalizationPrompt },
-            { role: 'user', content: 'Clean this message now.' }
-          ],
-        },
-        provider
-      );
-
-      if (!result.success || !result.data) {
-        // If finalization fails, return original message
-        logger.warn('Finalization failed, using original message');
-        return rawMessage;
-      }
-
-      return result.data.trim();
-    } catch (error) {
-      // If finalization fails, return original message
-      logger.warn('Finalization error, using original message');
-      return rawMessage;
+    // Strip surrounding markdown code fences (```...``` or ```lang ... ```)
+    const fenceMatch = message.match(/^```(?:[a-zA-Z]+)?\n([\s\S]*?)\n```$/);
+    if (fenceMatch && fenceMatch[1]) {
+      message = fenceMatch[1].trim();
     }
+
+    // Remove common AI-generated lead-ins
+    const prefixPatterns = [
+      /^commit message:\s*/i,
+      /^here is the commit message:\s*/i,
+      /^here's the commit message:\s*/i,
+      /^the commit message is:\s*/i,
+      /^this is the commit message:\s*/i,
+      /^suggested commit:\s*/i,
+      /^commit:\s*/i,
+    ];
+    for (const pattern of prefixPatterns) {
+      message = message.replace(pattern, '');
+    }
+
+    // Remove wrapping quotes around the whole message
+    message = message.replace(/^"([\s\S]+)"$/, '$1').replace(/^'([\s\S]+)'$/, '$1');
+
+    // Collapse excessive blank lines, trim trailing spaces per line
+    message = message
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    // Enforce configured max length as a final safety net
+    const maxLength = this.config!.preferences.maxCommitLength;
+    if (maxLength && maxLength > 0 && message.length > maxLength) {
+      const lines = message.split('\n');
+      const subject = lines[0] || '';
+      if (subject.length > maxLength) {
+        message = subject.substring(0, maxLength - 3) + '...';
+      } else {
+        message = message.substring(0, maxLength - 3) + '...';
+      }
+      logger.debug(`Commit message trimmed to ${maxLength} chars`);
+    }
+
+    return message;
   }
 
   /**
@@ -758,31 +747,47 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
     // Add summary
     sections.push(`Summary: ${diff.files.length} files changed, ${diff.totalLines} lines modified\n`);
 
-    // Get adaptive line limit based on commit size
+    // Adaptive per-file line budget: keep small commits fully intact, only
+    // trim genuinely huge diffs so the prompt stays within token limits.
+    // Token-based chunking downstream is the real overflow guard; this is a
+    // soft cap to avoid pathologically large single files dominating context.
     const lineLimit = this.getAdaptiveLineLimit(diff.files[0] || {} as GitFile, diff.files.length);
 
-    // Add file changes
+    // Add file changes as a real unified-diff-style block per file, preserving
+    // surrounding context lines and hunk headers. The model needs to SEE what
+    // the code does, not a stripped list of +/- lines — that's what made it
+    // fall back to memorized clichés on thin input.
     for (const file of diff.files) {
       if (file.isBinary) {
-        sections.push(`File: ${file.path} (${file.status}) - Binary file`);
+        sections.push(`--- ${file.path} (${file.status}) — binary file`);
         continue;
       }
 
-      sections.push(`File: ${file.path} (${file.status})`);
+      sections.push(`--- ${file.path} (${file.status})`);
 
       for (const chunk of file.chunks) {
-        if (chunk.context) {
-          sections.push(`Context: ${chunk.context}`);
+        // Hunk header gives the model location/structure context
+        if (chunk.header) {
+          sections.push(chunk.header);
         }
 
-        const relevantLines = chunk.lines
-          .filter(line => line.type === 'added' || line.type === 'removed')
-          .slice(0, lineLimit) // Use adaptive limit instead of hardcoded 20
-          .map(line => `${line.type === 'added' ? '+' : '-'}${line.content}`)
-          .join('\n');
+        const renderedLines: string[] = [];
+        let truncated = false;
 
-        if (relevantLines) {
-          sections.push(relevantLines);
+        for (const line of chunk.lines) {
+          if (renderedLines.length >= lineLimit) {
+            truncated = true;
+            break;
+          }
+          const prefix = line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ';
+          renderedLines.push(`${prefix}${line.content}`);
+        }
+
+        if (renderedLines.length > 0) {
+          sections.push(renderedLines.join('\n'));
+        }
+        if (truncated) {
+          sections.push(`… (hunk truncated at ${lineLimit} lines)`);
         }
       }
 
@@ -853,10 +858,11 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
       return configuredModel;
     }
 
-    // Default models
-    return provider === 'openrouter' 
-      ? 'anthropic/claude-3-haiku:beta'
-      : 'gpt-3.5-turbo';
+    // Default models. Gemini Flash Lite is cheap, fast, and supports strict
+    // json_schema structured output — a good default for commit generation.
+    return provider === 'openrouter'
+      ? 'google/gemini-2.0-flash-lite-001'
+      : 'gpt-4o-mini';
   }
 
   /**
@@ -1148,23 +1154,19 @@ OUTPUT ONLY THE CLEANED COMMIT MESSAGE:`;
    * Larger commits get smaller preview per file to stay within token limits
    */
   private getAdaptiveLineLimit(file: GitFile, totalFiles: number): number {
-    // For very small commits, show almost everything
+    // Per-hunk soft cap. Generous on purpose: token-based chunking is the real
+    // overflow guard, so here we only protect against a single pathological hunk
+    // swallowing the whole prompt. Small/medium commits are sent essentially in full.
     if (totalFiles <= 5) {
+      return 1000;
+    }
+    if (totalFiles <= 20) {
+      return 500;
+    }
+    if (totalFiles <= 50) {
       return 200;
     }
-
-    // For small-medium commits, show a lot
-    if (totalFiles <= 20) {
-      return 100;
-    }
-
-    // For medium-large commits, show moderate amount
-    if (totalFiles <= 50) {
-      return 50;
-    }
-
-    // For large commits, show minimum meaningful context
-    return 30;
+    return 100;
   }
 }
 

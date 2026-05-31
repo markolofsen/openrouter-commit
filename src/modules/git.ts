@@ -177,6 +177,27 @@ export class GitManager {
     }
   }
 
+  /**
+   * Stable identifier for the current repository + branch, used to namespace
+   * the commit-message cache so unrelated projects never collide on the same
+   * cache key. Falls back to the process cwd if git metadata is unavailable.
+   */
+  async getCacheScope(): Promise<string> {
+    let root = '';
+    let branch = '';
+    try {
+      root = await this.getRepositoryRoot();
+    } catch {
+      root = process.cwd();
+    }
+    try {
+      branch = await this.getCurrentBranch();
+    } catch {
+      branch = '';
+    }
+    return `${root}#${branch}`;
+  }
+
   // Private methods
 
   private parseDiff(diffOutput: string, options: ChunkProcessingOptions): GitDiff {

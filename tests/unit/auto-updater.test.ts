@@ -128,17 +128,17 @@ describe('AutoUpdater', () => {
     });
   });
 
-  describe('silentUpdate', () => {
+  describe('notifyIfUpdateAvailable', () => {
     it('should return false when no update available', async () => {
       mockFs.readFile.mockRejectedValue(new Error('Cache not found'));
       mockUpdateNotifier.mockReturnValue({ update: undefined });
 
-      const result = await autoUpdater.silentUpdate();
+      const result = await autoUpdater.notifyIfUpdateAvailable();
 
       expect(result).toBe(false);
     });
 
-    it('should attempt to update when update is available', async () => {
+    it('should print a notification (never auto-install) when update is available', async () => {
       mockFs.readFile.mockRejectedValue(new Error('Cache not found'));
       mockUpdateNotifier.mockReturnValue({
         update: {
@@ -149,41 +149,21 @@ describe('AutoUpdater', () => {
         },
       });
 
-      // Mock permission check to return false so it shows notification
-      mockExecSync.mockReturnValueOnce('/usr/local');
-      mockFs.access.mockRejectedValue(new Error('No write permission'));
-
       const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
 
-      await autoUpdater.silentUpdate();
+      const result = await autoUpdater.notifyIfUpdateAvailable();
 
-      // Should show update notification
+      expect(result).toBe(true);
       expect(consoleSpy).toHaveBeenCalled();
 
-      consoleSpy.mockRestore();
-    });
+      // The notification must NEVER recommend sudo (root-owned installs are
+      // the cause of later EACCES failures).
+      const printed = consoleSpy.mock.calls.map(c => String(c[0])).join('\n');
+      expect(printed).not.toMatch(/sudo/i);
+      expect(printed).toMatch(/npm install -g orcommit/);
 
-    it('should show notification when no permissions', async () => {
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
-
-      mockFs.readFile.mockRejectedValue(new Error('Cache not found'));
-      mockUpdateNotifier.mockReturnValue({
-        update: {
-          latest: '1.1.0',
-          current: '1.0.0',
-          type: 'minor',
-          name: 'orcommit',
-        },
-      });
-
-      // Mock failed permission check
-      mockExecSync.mockReturnValueOnce('/usr/local');
-      mockFs.access.mockRejectedValue(new Error('Permission denied'));
-
-      const result = await autoUpdater.silentUpdate();
-
-      expect(result).toBe(false);
-      expect(consoleSpy).toHaveBeenCalled();
+      // It must NOT shell out to install anything.
+      expect(mockExecSync).not.toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });
@@ -194,7 +174,7 @@ describe('AutoUpdater', () => {
         throw new Error('Network error');
       });
 
-      const result = await autoUpdater.silentUpdate();
+      const result = await autoUpdater.notifyIfUpdateAvailable();
 
       // Should return false on error without throwing
       expect(result).toBe(false);

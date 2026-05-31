@@ -80,7 +80,11 @@ describe('Phase 1-3 Improvements - Unit Tests', () => {
       expect(filtered.files[0]?.path).toBe('src/app.ts');
     });
 
-    it('should remove vendor directory', () => {
+    it('should keep vendor directory (allowed for Go projects)', () => {
+      // Vendor is intentionally NOT filtered: Go projects commit vendored
+      // dependencies deliberately. See diff-filter quickFilter (commit
+      // "allow vendor directory for Go projects"). PHP Composer vendor noise
+      // is a known trade-off accepted in favor of not breaking Go workflows.
       const diff: GitDiff = {
         files: [
           createMockFile('vendor/autoload.php'),
@@ -91,8 +95,23 @@ describe('Phase 1-3 Improvements - Unit Tests', () => {
       };
 
       const filtered = diffFilter.quickFilter(diff);
+      expect(filtered.files.length).toBe(2);
+      expect(filtered.files.map(f => f.path)).toEqual(['vendor/autoload.php', 'src/main.php']);
+    });
+
+    it('should remove node_modules package directory', () => {
+      const diff: GitDiff = {
+        files: [
+          createMockFile('node_modules/lodash/index.js'),
+          createMockFile('src/main.ts'),
+        ],
+        totalLines: 0,
+        totalSize: 0,
+      };
+
+      const filtered = diffFilter.quickFilter(diff);
       expect(filtered.files.length).toBe(1);
-      expect(filtered.files[0]?.path).toBe('src/main.php');
+      expect(filtered.files[0]?.path).toBe('src/main.ts');
     });
 
     it('should remove cache directories', () => {

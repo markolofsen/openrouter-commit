@@ -28,6 +28,7 @@ describe('CacheManager', () => {
   const testProvider = 'openrouter';
   const testTemperature = 0.6;
   const testCommitMessage = 'feat: add new feature';
+  const testScope = '/repo/project-a#main';
 
   beforeEach(() => {
     cacheManager = new CacheManager({
@@ -42,16 +43,16 @@ describe('CacheManager', () => {
     it('should return null when cache is disabled', async () => {
       const disabledCache = new CacheManager({ enabled: false });
       
-      const result = await disabledCache.get(testContent, testModel, testProvider, testTemperature);
+      const result = await disabledCache.get(testContent, testModel, testProvider, testTemperature, testScope);
       expect(result).toBeNull();
     });
 
     it('should return cached value from memory', async () => {
       // First, set a value in cache
-      await cacheManager.set(testContent, testModel, testProvider, testTemperature, testCommitMessage);
+      await cacheManager.set(testContent, testModel, testProvider, testTemperature, testCommitMessage, testScope);
       
       // Mock successful memory cache hit
-      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature);
+      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature, testScope);
       expect(result).toBe(testCommitMessage);
     });
 
@@ -66,7 +67,7 @@ describe('CacheManager', () => {
 
       mockFs.readFile.mockResolvedValue(JSON.stringify(cacheEntry));
       
-      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature);
+      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature, testScope);
       expect(result).toBe(testCommitMessage);
     });
 
@@ -81,22 +82,38 @@ describe('CacheManager', () => {
 
       mockFs.readFile.mockResolvedValue(JSON.stringify(expiredEntry));
       
-      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature);
+      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature, testScope);
       expect(result).toBeNull();
     });
 
     it('should return null when disk cache file not found', async () => {
       mockFs.readFile.mockRejectedValue({ code: 'ENOENT' });
       
-      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature);
+      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature, testScope);
       expect(result).toBeNull();
     });
 
     it('should handle disk cache read errors gracefully', async () => {
       mockFs.readFile.mockRejectedValue(new Error('Permission denied'));
-      
-      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature);
+
+      const result = await cacheManager.get(testContent, testModel, testProvider, testTemperature, testScope);
       expect(result).toBeNull();
+    });
+
+    it('should NOT serve a cached message across different repository scopes', async () => {
+      // Regression: identical diff content + model + provider + temperature
+      // from two unrelated projects must not collide. Without scope in the
+      // key, project B would receive project A's commit message.
+      await cacheManager.set(testContent, testModel, testProvider, testTemperature, testCommitMessage, '/repo/project-a#main');
+
+      // Disk lookup misses for the other scope (different key → ENOENT)
+      mockFs.readFile.mockRejectedValue({ code: 'ENOENT' });
+
+      const sameScope = await cacheManager.get(testContent, testModel, testProvider, testTemperature, '/repo/project-a#main');
+      const otherScope = await cacheManager.get(testContent, testModel, testProvider, testTemperature, '/repo/project-b#main');
+
+      expect(sameScope).toBe(testCommitMessage); // same project → hit
+      expect(otherScope).toBeNull();              // different project → miss
     });
   });
 
@@ -104,7 +121,7 @@ describe('CacheManager', () => {
     it('should not set when cache is disabled', async () => {
       const disabledCache = new CacheManager({ enabled: false });
       
-      await disabledCache.set(testContent, testModel, testProvider, testTemperature, testCommitMessage);
+      await disabledCache.set(testContent, testModel, testProvider, testTemperature, testCommitMessage, testScope);
       
       expect(mockFs.writeFile).not.toHaveBeenCalled();
     });
@@ -112,7 +129,7 @@ describe('CacheManager', () => {
     it('should store value in memory and disk cache', async () => {
       mockFs.access.mockRejectedValue(new Error('ENOENT')); // Directory doesn't exist
       
-      await cacheManager.set(testContent, testModel, testProvider, testTemperature, testCommitMessage);
+      await cacheManager.set(testContent, testModel, testProvider, testTemperature, testCommitMessage, testScope);
       
       expect(mockFs.mkdir).toHaveBeenCalledWith('/tmp/test-home/.cache/orcommit', { recursive: true });
       expect(mockFs.writeFile).toHaveBeenCalled();
@@ -129,7 +146,7 @@ describe('CacheManager', () => {
       mockFs.writeFile.mockRejectedValue(new Error('Disk full'));
       
       await expect(
-        cacheManager.set(testContent, testModel, testProvider, testTemperature, testCommitMessage)
+        cacheManager.set(testContent, testModel, testProvider, testTemperature, testCommitMessage, testScope)
       ).resolves.not.toThrow();
     });
   });
@@ -244,8 +261,8 @@ describe('CacheManager', () => {
   describe('cache key generation', () => {
     it('should generate different keys for different inputs', async () => {
       // This is tested indirectly by setting and getting different values
-      await cacheManager.set('content1', 'model1', 'provider1', 0.1, 'message1');
-      await cacheManager.set('content2', 'model2', 'provider2', 0.2, 'message2');
+      await cacheManager.set('content1', 'model1', 'provider1', 0.1, 'message1', 'scope1');
+      await cacheManager.set('content2', 'model2', 'provider2', 0.2, 'message2', 'scope2');
 
       // Different content should generate different cache keys
       expect(mockFs.writeFile).toHaveBeenCalledTimes(2);

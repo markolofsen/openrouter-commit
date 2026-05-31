@@ -66,6 +66,12 @@ export interface ApiRequest {
   readonly maxTokens: number;
   readonly temperature: number;
   readonly stream?: boolean;
+  /**
+   * OpenAI/OpenRouter `response_format`. When set to a json_schema block, the
+   * provider constrains decoding so the model cannot emit malformed JSON or
+   * the wrong shape — far more reliable than prompting + regex extraction.
+   */
+  readonly responseFormat?: Record<string, unknown>;
 }
 
 export interface ApiMessage {
@@ -200,7 +206,9 @@ export const DEFAULT_CONFIG: Readonly<Config> = {
   preferences: {
     defaultProvider: 'openrouter',
     maxTokens: 500,
-    temperature: 0.6,
+    // Low temperature keeps the message grounded in the actual diff and
+    // reduces drift toward memorized, generic commit phrasings.
+    temperature: 0.3,
     autoConfirm: false,
     language: 'en',
     commitFormat: 'conventional',

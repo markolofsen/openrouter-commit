@@ -33,16 +33,31 @@ export class CacheManager {
   }
 
   /**
-   * Generate cache key from diff content and request parameters
+   * Generate cache key from diff content and request parameters.
+   *
+   * `scope` MUST identify the repository (and ideally branch) the diff came
+   * from. Without it, two unrelated projects whose trimmed diffs happen to
+   * hash identically would collide and serve each other's commit messages —
+   * the root cause of "why does my unrelated repo suggest a message from
+   * another project". The scope is mixed into the hash so cross-repo
+   * collisions are impossible.
    */
-  private generateCacheKey(content: string, model: string, provider: string, temperature: number): string {
+  private generateCacheKey(
+    content: string,
+    model: string,
+    provider: string,
+    temperature: number,
+    scope: string
+  ): string {
     const hash = createHash('sha256')
+      .update(scope)
+      .update('\x00') // domain separator so scope/content can't run together
       .update(content)
       .update(model)
       .update(provider)
       .update(temperature.toString())
       .digest('hex');
-    
+
     return hash.slice(0, 16); // Use first 16 chars for shorter filenames
   }
 
@@ -53,13 +68,14 @@ export class CacheManager {
     content: string,
     model: string,
     provider: string,
-    temperature: number
+    temperature: number,
+    scope: string
   ): Promise<string | null> {
     if (!this.options.enabled) {
       return null;
     }
 
-    const key = this.generateCacheKey(content, model, provider, temperature);
+    const key = this.generateCacheKey(content, model, provider, temperature, scope);
     
     try {
       // Check memory cache first
@@ -95,13 +111,14 @@ export class CacheManager {
     model: string,
     provider: string,
     temperature: number,
-    commitMessage: string
+    commitMessage: string,
+    scope: string
   ): Promise<void> {
     if (!this.options.enabled) {
       return;
     }
 
-    const key = this.generateCacheKey(content, model, provider, temperature);
+    const key = this.generateCacheKey(content, model, provider, temperature, scope);
     const contentHash = createHash('sha256').update(content).digest('hex');
     
     const entry: CacheEntry<string> = {
