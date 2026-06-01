@@ -254,9 +254,84 @@ export function parseAIResponse(response: string): {
     // Continue to fallback
   }
 
-  // Fallback: treat entire response as commit message (backward compatibility)
+  // Strategy 5: Truncated/partial JSON recovery.
+  // When the model response is cut off (e.g. maxTokens too low), the JSON is
+  // never closed, so JSON.parse and extractBalancedJson all fail above. Rather
+  // than commit the raw, broken JSON, recover the `commitMessage` string value
+  // directly — even if its closing quote/brace is missing.
+  const recovered = recoverCommitMessageFromPartialJson(originalResponse);
+  if (recovered) {
+    return {
+      assessment: extractStringFieldFromPartialJson(originalResponse, 'codeAssessment'),
+      commitMessage: recovered
+    };
+  }
+
+  // At this point every JSON strategy (full parse, balanced extraction, partial
+  // recovery) has failed. If the response still LOOKS like JSON — it starts with
+  // `{` or `[` — then it is broken/truncated structured output, NOT plain text.
+  // Committing it verbatim is exactly the bug where a bare `{` / `"` becomes the
+  // commit message. Surface it as an error so the caller can retry/regenerate.
+  if (originalResponse.startsWith('{') || originalResponse.startsWith('[')) {
+    throw new Error(
+      'AI returned malformed structured output (no parseable commitMessage field). ' +
+      'The model likely ignored or truncated the json_schema response.'
+    );
+  }
+
+  // Fallback: treat entire response as commit message (backward compatibility).
+  // Only reached when the response wasn't JSON at all (plain-text model output).
   return {
     assessment: null,
     commitMessage: originalResponse
   };
+}
+
+/**
+ * Pull a JSON string field's value out of a possibly-truncated JSON blob.
+ * Scans character-by-character from after `"<field>"\s*:\s*"` honouring escape
+ * sequences, and stops at the first unescaped closing quote OR end-of-input
+ * (truncated). Returns the unescaped value, or null if the field isn't present.
+ */
+function extractStringFieldFromPartialJson(text: string, field: string): string | null {
+  const keyMatch = new RegExp(`"${field}"\\s*:\\s*"`).exec(text);
+  if (!keyMatch) return null;
+
+  const start = keyMatch.index + keyMatch[0].length;
+  let raw = '';
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (escape) {
+      raw += char;
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      raw += char;
+      escape = true;
+      continue;
+    }
+    if (char === '"') break; // unescaped closing quote → end of value
+    raw += char;
+  }
+
+  // Unescape JSON string escapes (\n, \t, \", \\, \uXXXX). Wrapping in quotes
+  // and JSON.parse handles all of them; fall back to manual unescape if the
+  // truncation left a dangling escape that breaks JSON.parse.
+  try {
+    return JSON.parse(`"${raw}"`);
+  } catch {
+    return raw
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+}
+
+/** Recover the `commitMessage` field from a partial/truncated JSON response. */
+function recoverCommitMessageFromPartialJson(text: string): string | null {
+  const msg = extractStringFieldFromPartialJson(text, 'commitMessage');
+  return msg && msg.trim().length > 0 ? msg.trim() : null;
 }

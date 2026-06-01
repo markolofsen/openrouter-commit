@@ -205,7 +205,11 @@ export const DEFAULT_CONFIG: Readonly<Config> = {
   },
   preferences: {
     defaultProvider: 'openrouter',
-    maxTokens: 500,
+    // The model returns a JSON envelope ({codeAssessment, commitMessage}); 500
+    // tokens truncates that for multi-file diffs, leaving unparseable JSON that
+    // used to leak into the commit. 2000 comfortably fits assessment + a long
+    // multi-line message. parseAIResponse also recovers from truncation now.
+    maxTokens: 2000,
     // Low temperature keeps the message grounded in the actual diff and
     // reduces drift toward memorized, generic commit phrasings.
     temperature: 0.3,

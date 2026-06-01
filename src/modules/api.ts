@@ -268,6 +268,17 @@ export class ApiManager {
     // Constrained decoding when a structured schema is requested.
     if (request.responseFormat) {
       payload.response_format = request.responseFormat;
+
+      // Route ONLY to providers/models that actually honor the schema. Without
+      // this OpenRouter may silently pick a model that ignores json_schema, the
+      // model returns free text or broken JSON, and downstream parsing degrades
+      // to "commit the raw response" — which is how a bare `{` ends up as the
+      // commit message. require_parameters makes the request fail loudly instead.
+      payload.provider = { require_parameters: true };
+
+      // Server-side repair of imperfect/truncated JSON (missing brace, trailing
+      // comma, markdown fences). Non-streaming only; harmless if unsupported.
+      payload.plugins = [{ id: 'response-healing' }];
     }
 
     const config: AxiosRequestConfig = {

@@ -252,20 +252,19 @@ describe('Formatting Utilities', () => {
       expect(result.commitMessage).toBe('');
     });
 
-    it('should handle malformed JSON gracefully', () => {
+    it('should throw on malformed JSON instead of committing the raw blob', () => {
+      // Regression: a broken JSON object must NOT become the commit message
+      // (the bug where a bare `{` / `"` was committed verbatim). It starts with
+      // `{`, so it is broken structured output, not plain text → throw to retry.
       const response = '{ invalid json }';
-      const result = parseAIResponse(response);
 
-      expect(result.assessment).toBeNull();
-      expect(result.commitMessage).toBe('{ invalid json }');
+      expect(() => parseAIResponse(response)).toThrow(/malformed structured output/i);
     });
 
-    it('should handle non-object JSON (array)', () => {
+    it('should throw on non-object JSON (array) instead of committing it', () => {
       const response = '["item1", "item2"]';
-      const result = parseAIResponse(response);
 
-      expect(result.assessment).toBeNull();
-      expect(result.commitMessage).toBe('["item1", "item2"]');
+      expect(() => parseAIResponse(response)).toThrow(/malformed structured output/i);
     });
 
     it('should handle non-object JSON (string)', () => {
@@ -274,6 +273,30 @@ describe('Formatting Utilities', () => {
 
       expect(result.assessment).toBeNull();
       expect(result.commitMessage).toBe('"just a string"');
+    });
+
+    it('should recover commitMessage from truncated/unclosed JSON (maxTokens cutoff)', () => {
+      // Simulates a response cut off mid-string: no closing quote/brace, so
+      // every JSON.parse-based strategy fails. We must NOT commit the raw JSON.
+      const response =
+        '{\n  "codeAssessment": "Cleanup and a small feature.",\n  "commitMessage": "feat(seo): add JSON-LD\\n\\n- Added a component to docs.\\n- Updated the httpx_arg';
+      const result = parseAIResponse(response);
+
+      expect(result.commitMessage.startsWith('feat(seo): add JSON-LD')).toBe(true);
+      expect(result.commitMessage).toContain('Added a component to docs.');
+      // The raw JSON envelope must not leak into the commit message.
+      expect(result.commitMessage).not.toContain('"commitMessage"');
+      expect(result.commitMessage).not.toContain('codeAssessment');
+      expect(result.assessment).toBe('Cleanup and a small feature.');
+    });
+
+    it('should recover commitMessage from valid-but-unbalanced JSON missing the final brace', () => {
+      const response =
+        '{"codeAssessment": "x", "commitMessage": "chore: bump version to 2.2.62"';
+      const result = parseAIResponse(response);
+
+      expect(result.commitMessage).toBe('chore: bump version to 2.2.62');
+      expect(result.commitMessage).not.toContain('{');
     });
   });
 });
