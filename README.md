@@ -48,7 +48,7 @@ If you care about **clean history, security, and standards** — this tool is fo
 * OpenAI (GPT‑4o, GPT‑4o‑mini)
 * Local models via **Ollama** (offline & private)
 
-Sensible defaults out of the box: `google/gemini-2.0-flash-lite-001` on OpenRouter
+Sensible defaults out of the box: `google/gemini-2.5-flash-lite` on OpenRouter
 (cheap, fast, great structured output) and `gpt-4o-mini` on OpenAI.
 
 ### 🧠 Smart Commit Generation
@@ -174,7 +174,7 @@ Config is stored at `~/.config/orcommit.json` (permissions `600`).
 {
   "providers": {
     "openrouter": {
-      "model": "google/gemini-2.0-flash-lite-001"
+      "model": "google/gemini-2.5-flash-lite"
     }
   },
   "preferences": {

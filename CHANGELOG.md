@@ -21,7 +21,7 @@
   `response_format` (constrained decoding) so the model returns valid structured
   JSON by construction; the regex parser remains as a graceful fallback.
 - Lower default `temperature` (0.6 → 0.3) to keep messages grounded.
-- Default OpenRouter model is now `google/gemini-2.0-flash-lite-001`
+- Default OpenRouter model is now `google/gemini-2.5-flash-lite`
   (fast, cheap, strong structured output); OpenAI default is `gpt-4o-mini`.
 
 ### ⚡ Reliability & cost

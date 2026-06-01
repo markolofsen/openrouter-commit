@@ -861,7 +861,7 @@ Never emit a generic, memorized message (e.g. "restructure X", "migrate from A t
     // Default models. Gemini Flash Lite is cheap, fast, and supports strict
     // json_schema structured output — a good default for commit generation.
     return provider === 'openrouter'
-      ? 'google/gemini-2.0-flash-lite-001'
+      ? 'google/gemini-2.5-flash-lite'
       : 'gpt-4o-mini';
   }
 
