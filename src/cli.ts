@@ -48,7 +48,7 @@ class CliApplication {
       // NOTE: no -v short flag here — -v is reserved program-wide for --version.
       .option('--verbose', 'Enable verbose logging', false)
       .option('-w, --watch', 'Watch for changes and auto-generate commits', false)
-      .option('-p, --provider <provider>', 'Specify AI provider (openrouter|openai)', this.validateProvider)
+      .option('-p, --provider <provider>', 'Specify AI provider (any configured provider)', this.validateProvider)
       // Extended formatting options
       .option('--emoji', 'Include emoji in commit message', false)
       .option('--one-line', 'Generate single-line commit message', false)
@@ -79,7 +79,7 @@ class CliApplication {
 
     configCmd
       .command('set <provider> <key>')
-      .description('Set API key for provider (openrouter|openai)')
+      .description('Set API key for a provider (creates it if new)')
       .action(async (provider: string, key: string) => {
         await this.handleConfigSet(provider, key);
       });
@@ -96,6 +96,25 @@ class CliApplication {
       .description('Set default model for provider')
       .action(async (provider: string, model: string) => {
         await this.handleConfigModel(provider, model);
+      });
+
+    configCmd
+      .command('provider <name>')
+      .description('Configure a custom provider (baseUrl, key, model, auth header)')
+      .option('--base-url <url>', 'API base URL (e.g. https://router.cmdop.com/v1)')
+      .option('--key <key>', 'API key')
+      .option('--model <model>', 'Default model (e.g. @fast)')
+      .option('--auth-header <header>', "Auth header name (default 'Authorization'; use 'X-API-Key' for cmdop)")
+      .option('--auth-scheme <scheme>', "Scheme prefix for Authorization header (default 'Bearer'; pass empty to send raw)")
+      .action(async (name: string, opts: { baseUrl?: string; key?: string; model?: string; authHeader?: string; authScheme?: string }) => {
+        await this.handleConfigProvider(name, opts);
+      });
+
+    configCmd
+      .command('remove-provider <name>')
+      .description('Remove a configured provider')
+      .action(async (name: string) => {
+        await this.handleConfigRemoveProvider(name);
       });
 
     configCmd
@@ -211,11 +230,11 @@ class CliApplication {
   private async handleConfigSet(provider: string, key: string): Promise<void> {
     try {
       if (!this.isValidProvider(provider)) {
-        logger.error(`Invalid provider: ${provider}. Must be 'openrouter' or 'openai'`);
+        logger.error(`Invalid provider name: ${provider}`);
         process.exit(1);
       }
 
-      await configManager.setApiKey(provider as 'openrouter' | 'openai', key);
+      await configManager.setApiKey(provider, key);
       logger.success(`API key set for ${provider}`);
 
     } catch (error) {
@@ -233,34 +252,43 @@ class CliApplication {
 
       if (provider) {
         if (!this.isValidProvider(provider)) {
-          logger.error(`Invalid provider: ${provider}. Must be 'openrouter' or 'openai'`);
+          logger.error(`Invalid provider name: ${provider}`);
           process.exit(1);
         }
 
-        const providerKey = provider as 'openrouter' | 'openai';
-        const maskedKey = await configManager.getMaskedApiKey(providerKey);
-        const model = config.providers[providerKey].model || 'default';
+        const maskedKey = await configManager.getMaskedApiKey(provider);
+        const providerConfig = config.providers[provider];
+        const model = providerConfig?.model || 'default';
 
         logger.table({
           Provider: provider,
           'API Key': maskedKey,
           Model: model,
+          'Base URL': providerConfig?.baseUrl || 'default',
+          'Auth Header': providerConfig?.authHeader || 'Authorization',
         });
       } else {
-        // Show all configuration
-        const openrouterKey = await configManager.getMaskedApiKey('openrouter');
-        const openaiKey = await configManager.getMaskedApiKey('openai');
+        // Show all configuration — iterate over every configured provider.
+        const providers = await configManager.listProviders();
 
-        logger.table({
+        const table: Record<string, string | number | boolean> = {
           'Default Provider': config.preferences.defaultProvider,
-          'OpenRouter API Key': openrouterKey,
-          'OpenAI API Key': openaiKey,
-          'Max Tokens': config.preferences.maxTokens,
-          'Temperature': config.preferences.temperature,
-          'Auto Confirm': config.preferences.autoConfirm,
-          'Language': config.preferences.language,
-          'Format': config.preferences.commitFormat,
-        });
+        };
+
+        for (const name of providers) {
+          const maskedKey = await configManager.getMaskedApiKey(name);
+          const model = config.providers[name]?.model || 'default';
+          table[`${name} API Key`] = maskedKey;
+          table[`${name} Model`] = model;
+        }
+
+        table['Max Tokens'] = config.preferences.maxTokens;
+        table['Temperature'] = config.preferences.temperature;
+        table['Auto Confirm'] = config.preferences.autoConfirm;
+        table['Language'] = config.preferences.language;
+        table['Format'] = config.preferences.commitFormat;
+
+        logger.table(table);
       }
 
     } catch (error) {
@@ -275,15 +303,63 @@ class CliApplication {
   private async handleConfigModel(provider: string, model: string): Promise<void> {
     try {
       if (!this.isValidProvider(provider)) {
-        logger.error(`Invalid provider: ${provider}. Must be 'openrouter' or 'openai'`);
+        logger.error(`Invalid provider name: ${provider}`);
         process.exit(1);
       }
 
-      await configManager.setModel(provider as 'openrouter' | 'openai', model);
+      await configManager.setModel(provider, model);
       logger.success(`Model set to ${model} for ${provider}`);
 
     } catch (error) {
       logger.error('Failed to set model', error as Error);
+      process.exit(1);
+    }
+  }
+
+  /**
+   * Handle full custom-provider configuration in one call
+   */
+  private async handleConfigProvider(
+    name: string,
+    opts: { baseUrl?: string; key?: string; model?: string; authHeader?: string; authScheme?: string }
+  ): Promise<void> {
+    try {
+      if (!this.isValidProvider(name)) {
+        logger.error(`Invalid provider name: ${name}`);
+        process.exit(1);
+      }
+
+      await configManager.setProvider(name, {
+        baseUrl: opts.baseUrl,
+        apiKey: opts.key,
+        model: opts.model,
+        authHeader: opts.authHeader,
+        authScheme: opts.authScheme,
+      });
+
+      logger.success(`Provider '${name}' configured`);
+
+    } catch (error) {
+      logger.error('Failed to configure provider', error as Error);
+      process.exit(1);
+    }
+  }
+
+  /**
+   * Handle removing a configured provider
+   */
+  private async handleConfigRemoveProvider(name: string): Promise<void> {
+    try {
+      if (!this.isValidProvider(name)) {
+        logger.error(`Invalid provider name: ${name}`);
+        process.exit(1);
+      }
+
+      await configManager.removeProvider(name);
+      logger.success(`Provider '${name}' removed`);
+
+    } catch (error) {
+      logger.error('Failed to remove provider', error as Error);
       process.exit(1);
     }
   }
@@ -318,17 +394,17 @@ class CliApplication {
       const testProvider = provider || config.preferences.defaultProvider;
 
       if (!this.isValidProvider(testProvider)) {
-        logger.error(`Invalid provider: ${testProvider}. Must be 'openrouter' or 'openai'`);
+        logger.error(`Invalid provider name: ${testProvider}`);
         process.exit(1);
       }
 
       const progress = logger.startProgress(`Testing ${testProvider} connection...`);
-      
+
       await coreOrchestrator.initialize();
-      
+
       // This would require implementing a test method in the API manager
       // For now, just verify configuration
-      const isValid = await configManager.validateConfig(testProvider as 'openrouter' | 'openai');
+      const isValid = await configManager.validateConfig(testProvider);
       
       if (isValid) {
         progress.succeed(`${testProvider} connection test passed`);
@@ -460,21 +536,28 @@ class CliApplication {
     return value as CommitType;
   }
 
+  // Syntactically valid provider name: non-empty, alphanumerics, dashes,
+  // underscores. Provider is now an open dictionary, so this is a soft-format
+  // check, not a whitelist of two literals.
+  private static readonly PROVIDER_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
   /**
-   * Validate provider
+   * Validate provider name (commander option parser). Accepts any
+   * syntactically valid provider identifier.
    */
-  private validateProvider(value: string): 'openrouter' | 'openai' {
-    if (value !== 'openrouter' && value !== 'openai') {
-      throw new Error(`Invalid provider: ${value}. Must be 'openrouter' or 'openai'`);
+  private validateProvider(value: string): string {
+    if (!value || !CliApplication.PROVIDER_NAME_RE.test(value)) {
+      throw new Error(`Invalid provider name: ${value}`);
     }
     return value;
   }
 
   /**
-   * Check if provider is valid
+   * Check whether a provider name is syntactically valid (not whether it is
+   * one of the built-ins — any registered provider is allowed).
    */
-  private isValidProvider(provider: string): provider is 'openrouter' | 'openai' {
-    return provider === 'openrouter' || provider === 'openai';
+  private isValidProvider(provider: string): boolean {
+    return Boolean(provider) && CliApplication.PROVIDER_NAME_RE.test(provider);
   }
 
   /**

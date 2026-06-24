@@ -380,7 +380,7 @@ export class CoreOrchestrator {
   private async generateCommitMessage(
     diff: GitDiff,
     options: CliOptions,
-    provider: 'openrouter' | 'openai',
+    provider: string,
     userFeedback?: string
   ): Promise<{ commitMessage: string; assessment: string | null }> {
     const spinner = createAIThinkingSpinner(
@@ -851,18 +851,28 @@ Never emit a generic, memorized message (e.g. "restructure X", "migrate from A t
   /**
    * Get the appropriate model for the provider
    */
-  private getModel(provider: 'openrouter' | 'openai'): string {
-    const configuredModel = this.config!.providers[provider].model;
-    
+  private getModel(provider: string): string {
+    const configuredModel = this.config!.providers[provider]?.model;
+
     if (configuredModel) {
       return configuredModel;
     }
 
-    // Default models. Gemini Flash Lite is cheap, fast, and supports strict
-    // json_schema structured output — a good default for commit generation.
-    return provider === 'openrouter'
-      ? 'google/gemini-2.5-flash-lite'
-      : 'gpt-4o-mini';
+    // Default models for the built-in providers. Gemini Flash Lite is cheap,
+    // fast, and supports strict json_schema structured output — a good default
+    // for commit generation.
+    if (provider === 'openrouter') {
+      return 'google/gemini-2.5-flash-lite';
+    }
+    if (provider === 'openai') {
+      return 'gpt-4o-mini';
+    }
+
+    // Custom providers must declare a model — we don't know their catalog.
+    throw new ConfigError(
+      `No model configured for provider '${provider}'. ` +
+        `Set one with: orc config model ${provider} <model>`
+    );
   }
 
   /**

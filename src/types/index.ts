@@ -1,9 +1,9 @@
 // Core configuration types
 export interface Config {
-  readonly providers: {
-    readonly openrouter: ProviderConfig;
-    readonly openai: ProviderConfig;
-  };
+  // Open dictionary of providers, keyed by an arbitrary provider name.
+  // Built-ins are `openrouter` and `openai`, but users can register any
+  // custom provider (e.g. `cmdop`) through the CLI.
+  readonly providers: Record<string, ProviderConfig>;
   readonly preferences: UserPreferences;
   readonly version: string;
 }
@@ -13,10 +13,24 @@ export interface ProviderConfig {
   readonly model?: string;
   readonly baseUrl?: string;
   readonly timeout?: number;
+  /**
+   * Name of the HTTP header the API key is sent in. Defaults to
+   * `'Authorization'`. For providers that expect a raw key in a custom header
+   * (e.g. cmdop_router uses `'X-API-Key'`), set this and the key is sent as-is
+   * without any scheme prefix.
+   */
+  readonly authHeader?: string;
+  /**
+   * Scheme prefix placed before the key in the `Authorization` header.
+   * Defaults to `'Bearer'`. Ignored when `authHeader` is not `'Authorization'`
+   * (the key is then sent raw). Pass an empty string to send the raw key in
+   * the Authorization header.
+   */
+  readonly authScheme?: string;
 }
 
 export interface UserPreferences {
-  readonly defaultProvider: 'openrouter' | 'openai';
+  readonly defaultProvider: string;
   readonly maxTokens: number;
   readonly temperature: number;
   readonly autoConfirm: boolean;
@@ -60,7 +74,7 @@ export interface GitLine {
 
 // API types
 export interface ApiRequest {
-  readonly provider: 'openrouter' | 'openai';
+  readonly provider: string;
   readonly model: string;
   readonly messages: ApiMessage[];
   readonly maxTokens: number;
@@ -101,7 +115,7 @@ export interface CliOptions {
   readonly dryRun?: boolean;
   readonly verbose?: boolean;
   readonly watch?: boolean;
-  readonly provider?: 'openrouter' | 'openai';
+  readonly provider?: string;
   // Extended formatting options
   readonly emoji?: boolean;
   readonly oneLine?: boolean;
@@ -193,9 +207,22 @@ export interface FileSafetyAnalysis {
 
 // Constants
 export const DEFAULT_CONFIG: Readonly<Config> = {
+  // Open dictionary: only the two built-in providers ship by default. Users add
+  // custom providers via the CLI, e.g.:
+  //   orc config provider cmdop \
+  //     --base-url https://router.cmdop.com/v1 \
+  //     --key <key> --model @fast --auth-header X-API-Key
+  // which produces an entry like:
+  //   cmdop: { baseUrl: 'https://router.cmdop.com/v1', apiKey: '...',
+  //            model: '@fast', authHeader: 'X-API-Key' }
   providers: {
     openrouter: {
       baseUrl: 'https://openrouter.ai/api/v1',
+      // Gemini Flash Lite is cheap, fast, and honors strict json_schema
+      // structured output — the right default for the constrained-decoding
+      // commit envelope this tool relies on. Ship it in the config (not just as
+      // a getModel() fallback) so `orc config get` shows the real default.
+      model: 'google/gemini-2.5-flash-lite',
       timeout: 60000,
     },
     openai: {

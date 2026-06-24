@@ -47,6 +47,8 @@ If you care about **clean history, security, and standards** — this tool is fo
 * OpenRouter (200+ models — Gemini, Claude, GPT, and more)
 * OpenAI (GPT‑4o, GPT‑4o‑mini)
 * Local models via **Ollama** (offline & private)
+* **Any OpenAI‑compatible endpoint** — bring your own provider with a custom
+  `baseUrl`, API key, model, and auth header (see [Custom providers](#-custom-providers))
 
 Sensible defaults out of the box: `google/gemini-2.5-flash-lite` on OpenRouter
 (cheap, fast, great structured output) and `gpt-4o-mini` on OpenAI.
@@ -194,6 +196,72 @@ Environment variables are also supported:
 export OPENROUTER_API_KEY="your-key"
 export OPENAI_API_KEY="your-key"
 ```
+
+---
+
+## 🔌 Custom providers
+
+Providers are an **open dictionary** — you're not limited to OpenRouter and
+OpenAI. Any OpenAI‑compatible `/chat/completions` endpoint works: point ORCommit
+at its `baseUrl`, give it a key, a model, and (if it doesn't use
+`Authorization: Bearer`) a custom auth header.
+
+```bash
+# One command to configure a brand‑new provider:
+orc config provider <name> \
+  --base-url <url> \
+  --key <api-key> \
+  --model <model> \
+  --auth-header <header>   # optional, default: Authorization
+  --auth-scheme <scheme>   # optional, default: Bearer (pass "" to send the key raw)
+```
+
+Then commit with it via `-p <name>`, or make it the default:
+
+```bash
+orc commit -p <name>
+orc config get               # lists every configured provider + its model
+orc config remove-provider <name>
+```
+
+> Custom providers **must** set `--model` — ORCommit ships default models only
+> for the built‑in `openrouter`/`openai` providers; it can't guess a third
+> party's catalog.
+
+### Example: cmdop router
+
+[cmdop](https://cmdop.com)'s router is OpenAI‑compatible but authenticates with
+an `X-API-Key` header (not `Authorization: Bearer`) and uses quality‑tier model
+aliases like `@cheap` / `@fast` / `@balanced` / `@smart`:
+
+```bash
+orc config provider cmdop \
+  --base-url https://router.cmdop.com/v1 \
+  --key YOUR_CMDOP_API_KEY \
+  --model @fast \
+  --auth-header X-API-Key
+
+orc commit -p cmdop
+```
+
+This writes an entry to `~/.config/orcommit.json`:
+
+```json
+{
+  "providers": {
+    "cmdop": {
+      "baseUrl": "https://router.cmdop.com/v1",
+      "apiKey": "YOUR_CMDOP_API_KEY",
+      "model": "@fast",
+      "authHeader": "X-API-Key"
+    }
+  }
+}
+```
+
+Because `authHeader` is not `Authorization`, the key is sent **raw** (no `Bearer`
+prefix). For endpoints that do use bearer auth with a non‑standard scheme, set
+`--auth-scheme` instead.
 
 ---
 

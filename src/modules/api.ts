@@ -32,26 +32,44 @@ export class ApiManager {
   /**
    * Initialize API client for a provider
    */
-  initializeProvider(provider: 'openrouter' | 'openai', config: Config): void {
+  initializeProvider(provider: string, config: Config): void {
     this.config = config; // Store config for later use
     const providerConfig = config.providers[provider];
 
-    if (!providerConfig.apiKey) {
+    if (!providerConfig?.apiKey) {
       throw new ApiError(`API key not configured for ${provider}`);
+    }
+
+    const apiKey = providerConfig.apiKey;
+
+    // Build auth header from provider config. Default behaviour is the classic
+    // `Authorization: Bearer <key>`. Custom providers may instead send the key
+    // raw in a different header (e.g. cmdop_router's `X-API-Key`).
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'orcommit/1.0.0',
+    };
+
+    const authHeader = providerConfig.authHeader || 'Authorization';
+    if (authHeader.toLowerCase() === 'authorization') {
+      const scheme = providerConfig.authScheme ?? 'Bearer';
+      headers[authHeader] = scheme ? `${scheme} ${apiKey}` : apiKey;
+    } else {
+      // Non-Authorization header → send the raw key (scheme is ignored).
+      headers[authHeader] = apiKey;
+    }
+
+    // OpenRouter-specific attribution headers (harmless elsewhere, but keep
+    // them scoped to the openrouter provider as before).
+    if (provider === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://github.com/markolofsen/openrouter-commit';
+      headers['X-Title'] = 'OpenRouter Commit CLI';
     }
 
     const client = axios.create({
       baseURL: providerConfig.baseUrl,
       timeout: providerConfig.timeout || 60000,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${providerConfig.apiKey}`,
-        'User-Agent': 'orcommit/1.0.0',
-        ...(provider === 'openrouter' && {
-          'HTTP-Referer': 'https://github.com/markolofsen/openrouter-commit',
-          'X-Title': 'OpenRouter Commit CLI',
-        }),
-      },
+      headers,
     });
 
     // Configure retry logic
@@ -84,7 +102,7 @@ export class ApiManager {
    */
   async generateCommitMessage(
     request: ApiRequest,
-    provider: 'openrouter' | 'openai'
+    provider: string
   ): Promise<ProcessingResult<string>> {
     return this.queue.add(async (): Promise<ProcessingResult<string>> => {
       try {
@@ -145,8 +163,8 @@ export class ApiManager {
    */
   async processChunks(
     chunks: string[],
-    baseRequest: { provider: 'openrouter' | 'openai'; model: string; maxTokens: number; temperature: number; systemPrompt: string; responseFormat?: Record<string, unknown> },
-    provider: 'openrouter' | 'openai'
+    baseRequest: { provider: string; model: string; maxTokens: number; temperature: number; systemPrompt: string; responseFormat?: Record<string, unknown> },
+    provider: string
   ): Promise<ProcessingResult<string[]>> {
     try {
       const promises = chunks.map(chunk =>
@@ -201,16 +219,22 @@ export class ApiManager {
   /**
    * Test API connection
    */
-  async testConnection(provider: 'openrouter' | 'openai'): Promise<boolean> {
+  async testConnection(provider: string): Promise<boolean> {
     try {
       const client = this.clients.get(provider);
       if (!client) {
         throw new ApiError(`Client not initialized for ${provider}`);
       }
 
+      // Prefer the provider's configured model; otherwise fall back to a safe
+      // default by provider name (custom providers without a configured model
+      // use the generic gpt-3.5-turbo id).
+      const configuredModel = this.config?.providers[provider]?.model;
+      const fallbackModel = provider === 'openrouter' ? 'openai/gpt-3.5-turbo' : 'gpt-3.5-turbo';
+
       const testRequest: ApiRequest = {
         provider,
-        model: provider === 'openrouter' ? 'openai/gpt-3.5-turbo' : 'gpt-3.5-turbo',
+        model: configuredModel || fallbackModel,
         messages: [{ role: 'user', content: 'test' }],
         maxTokens: 10,
         temperature: 0.1,
@@ -251,7 +275,7 @@ export class ApiManager {
   private async makeRequest(
     client: AxiosInstance,
     request: ApiRequest,
-    provider: 'openrouter' | 'openai',
+    provider: string,
     retryCount: number = 0
   ): Promise<ApiResponse> {
     const endpoint = '/chat/completions';
@@ -330,7 +354,7 @@ export class ApiManager {
     }
   }
 
-  private parseResponse(data: any, provider: 'openrouter' | 'openai'): ApiResponse {
+  private parseResponse(data: any, provider: string): ApiResponse {
     // Check for API errors first
     if (data.error) {
       const errorMsg = typeof data.error === 'string'
