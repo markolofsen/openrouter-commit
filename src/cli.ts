@@ -118,6 +118,13 @@ class CliApplication {
       });
 
     configCmd
+      .command('default <name>')
+      .description('Set the active (default) provider')
+      .action(async (name: string) => {
+        await this.handleConfigDefault(name);
+      });
+
+    configCmd
       .command('prompt [text]')
       .description('Set or clear custom system prompt (omit text to clear)')
       .action(async (text?: string) => {
@@ -360,6 +367,25 @@ class CliApplication {
 
     } catch (error) {
       logger.error('Failed to remove provider', error as Error);
+      process.exit(1);
+    }
+  }
+
+  /**
+   * Handle setting the active (default) provider
+   */
+  private async handleConfigDefault(name: string): Promise<void> {
+    try {
+      if (!this.isValidProvider(name)) {
+        logger.error(`Invalid provider name: ${name}`);
+        process.exit(1);
+      }
+
+      await configManager.setDefaultProvider(name);
+      logger.success(`Active provider set to '${name}'`);
+
+    } catch (error) {
+      logger.error('Failed to set default provider', error as Error);
       process.exit(1);
     }
   }

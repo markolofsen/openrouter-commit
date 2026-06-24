@@ -77,9 +77,25 @@ export class ApiManager {
       retries: RETRY_CONFIG.MAX_RETRIES,
       retryDelay: axiosRetry.exponentialDelay,
       retryCondition: (error: AxiosError) => {
+        const status = error.response?.status;
+
+        // Don't burn axios-level retries on a request that carried a
+        // json_schema response_format to a non-OpenRouter provider: that error
+        // is handled once, immediately, by the schema-fallback in makeRequest
+        // (retry without response_format). Retrying the same rejected payload
+        // 3× with exponential backoff first just wastes ~tens of seconds.
+        if (
+          !this.isOpenRouter(provider) &&
+          status !== undefined &&
+          [400, 422, 500, 502].includes(status) &&
+          this.requestHadResponseFormat(error)
+        ) {
+          return false;
+        }
+
         return axiosRetry.isNetworkOrIdempotentRequestError(error) ||
-               error.response?.status === 429 ||
-               (error.response?.status !== undefined && error.response.status >= 500);
+               status === 429 ||
+               (status !== undefined && status >= 500);
       },
       shouldResetTimeout: true,
       onRetry: (retryCount, error) => {
@@ -293,16 +309,23 @@ export class ApiManager {
     if (request.responseFormat) {
       payload.response_format = request.responseFormat;
 
-      // Route ONLY to providers/models that actually honor the schema. Without
-      // this OpenRouter may silently pick a model that ignores json_schema, the
-      // model returns free text or broken JSON, and downstream parsing degrades
-      // to "commit the raw response" — which is how a bare `{` ends up as the
-      // commit message. require_parameters makes the request fail loudly instead.
-      payload.provider = { require_parameters: true };
+      // `provider` and `plugins` are OpenRouter-specific extensions. Other
+      // OpenAI-compatible endpoints reject unknown top-level fields (cmdop's
+      // router returns HTTP 422 "Extra inputs are not permitted"), so only send
+      // them to OpenRouter. Everyone else gets a clean OpenAI-shaped payload
+      // with just `response_format`.
+      if (this.isOpenRouter(provider)) {
+        // Route ONLY to providers/models that actually honor the schema. Without
+        // this OpenRouter may silently pick a model that ignores json_schema, the
+        // model returns free text or broken JSON, and downstream parsing degrades
+        // to "commit the raw response" — which is how a bare `{` ends up as the
+        // commit message. require_parameters makes the request fail loudly instead.
+        payload.provider = { require_parameters: true };
 
-      // Server-side repair of imperfect/truncated JSON (missing brace, trailing
-      // comma, markdown fences). Non-streaming only; harmless if unsupported.
-      payload.plugins = [{ id: 'response-healing' }];
+        // Server-side repair of imperfect/truncated JSON (missing brace, trailing
+        // comma, markdown fences). Non-streaming only; harmless if unsupported.
+        payload.plugins = [{ id: 'response-healing' }];
+      }
     }
 
     const config: AxiosRequestConfig = {
@@ -315,6 +338,27 @@ export class ApiManager {
     } catch (error) {
       if (!(error instanceof ApiError)) {
         throw error;
+      }
+
+      // Graceful schema fallback: some OpenAI-compatible endpoints accept the
+      // request shape but choke on json_schema response_format (cmdop's router
+      // currently 502s on it). If we sent a response_format to a non-OpenRouter
+      // provider and got a client/server error back, retry ONCE in plain-text
+      // mode. We lose constrained decoding (downstream parsing handles the
+      // free-text JSON), but the commit still gets generated instead of failing.
+      const schemaUnsupported =
+        request.responseFormat &&
+        !this.isOpenRouter(provider) &&
+        retryCount === 0 &&
+        [400, 422, 500, 502].includes(error.statusCode ?? 0);
+
+      if (schemaUnsupported) {
+        logger.warn(
+          `${provider} rejected structured output (${error.statusCode}); ` +
+            `retrying without response_format`
+        );
+        const { responseFormat: _omit, ...textRequest } = request;
+        return this.makeRequest(client, textRequest, provider, retryCount + 1);
       }
 
       const msg = error.message.toLowerCase();
@@ -352,6 +396,30 @@ export class ApiManager {
 
       throw error;
     }
+  }
+
+  /**
+   * Whether a provider is OpenRouter, so we know if its proprietary payload
+   * extensions (`provider`, `plugins`) are safe to send. Detected by baseUrl
+   * (any provider name pointed at openrouter.ai counts), falling back to the
+   * conventional `openrouter` provider id.
+   */
+  /**
+   * Whether the failed request's body carried a `response_format`. Used by the
+   * retry condition to recognise schema-rejection failures (axios stores the
+   * serialized request body on error.config.data).
+   */
+  private requestHadResponseFormat(error: AxiosError): boolean {
+    const data = error.config?.data;
+    if (typeof data !== 'string') return false;
+    return data.includes('"response_format"');
+  }
+
+  private isOpenRouter(provider: string): boolean {
+    const baseUrl = this.config?.providers[provider]?.baseUrl ?? '';
+    // Match the openrouter.ai host whether preceded by a scheme separator
+    // (https://openrouter.ai), a subdomain dot (.openrouter.ai), or nothing.
+    return /(^|[/.@])openrouter\.ai\b/i.test(baseUrl) || provider === 'openrouter';
   }
 
   private parseResponse(data: any, provider: string): ApiResponse {
@@ -461,12 +529,11 @@ export class ApiManager {
       // HTTP error response
       const status = error.response.status;
       const data = error.response.data as any;
-      
+
       let message = `${provider} API error (${status})`;
-      if (data?.error?.message) {
-        message += `: ${data.error.message}`;
-      } else if (data?.message) {
-        message += `: ${data.message}`;
+      const detail = this.extractErrorDetail(data);
+      if (detail) {
+        message += `: ${detail}`;
       }
 
       throw new ApiError(message, status, error);
@@ -477,6 +544,56 @@ export class ApiManager {
       // Other error
       throw new ApiError(`Request setup error for ${provider}: ${error.message}`, undefined, error);
     }
+  }
+
+  /**
+   * Pull a human-readable detail out of an error response body. Providers are
+   * wildly inconsistent here, so we handle the common shapes instead of only
+   * OpenAI's `{ error: { message } }`:
+   *   - OpenAI/OpenRouter:  { error: { message } }  or  { error: "string" }
+   *   - FastAPI/Pydantic:   { detail: [ { loc, msg, type }, ... ] }  (e.g. cmdop)
+   *   - FastAPI simple:     { detail: "string" }
+   *   - misc:               { message: "string" }
+   *   - raw string body
+   * Returns undefined when nothing useful can be extracted, so the caller keeps
+   * the bare `provider API error (status)`.
+   */
+  private extractErrorDetail(data: unknown): string | undefined {
+    if (data == null) return undefined;
+
+    if (typeof data === 'string') {
+      const trimmed = data.trim();
+      return trimmed.length ? trimmed : undefined;
+    }
+
+    if (typeof data !== 'object') return undefined;
+    const obj = data as Record<string, any>;
+
+    // OpenAI / OpenRouter style.
+    if (obj.error) {
+      if (typeof obj.error === 'string') return obj.error;
+      if (typeof obj.error.message === 'string') return obj.error.message;
+    }
+
+    // FastAPI / Pydantic validation errors (what cmdop's router returns).
+    if (obj.detail !== undefined) {
+      if (typeof obj.detail === 'string') return obj.detail;
+      if (Array.isArray(obj.detail)) {
+        const parts = obj.detail
+          .map((d: any) => {
+            if (typeof d === 'string') return d;
+            const loc = Array.isArray(d?.loc) ? d.loc.join('.') : undefined;
+            const msg = d?.msg ?? d?.message;
+            return loc && msg ? `${loc}: ${msg}` : msg || undefined;
+          })
+          .filter(Boolean);
+        if (parts.length) return parts.join('; ');
+      }
+    }
+
+    if (typeof obj.message === 'string') return obj.message;
+
+    return undefined;
   }
 
   private calculateRetryDelay(statusCode?: number): number {

@@ -1,106 +1,34 @@
 # ORCommit
 
-### AI-powered Git commits with security, standards, and full control
+### AI-powered git commit messages — secure, conventional, multi-provider
 
 <p align="center">
   <img src="https://unpkg.com/orcommit@latest/preview.png" alt="ORCommit Banner" width="600" />
 </p>
 
-> Generate **accurate, conventional, and secure** git commit messages using **OpenAI, Claude, OpenRouter, or local models (Ollama)**.
-
 ```bash
 git add .
 orc commit
 ```
 
-✔ Conventional Commits
-✔ Secret scanning (Gitleaks)
-✔ Cloud & local AI
-✔ Zero-config to start
+ORCommit reads your staged diff and writes a clean, [Conventional Commit](https://www.conventionalcommits.org/) message for you — using OpenRouter, OpenAI, a local model (Ollama), or any OpenAI-compatible API. It scans for secrets before committing, so you don't leak keys into git history.
 
 <p align="center">
   <a href="https://badge.fury.io/js/orcommit"><img src="https://badge.fury.io/js/orcommit.svg" alt="npm version"></a>
-  <a href="https://github.com/ellerbrock/typescript-badges/"><img src="https://badges.frapsoft.com/typescript/code/typescript.svg?v=101" alt="TypeScript"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
 </p>
 
 ---
 
-## TL;DR
-
-**ORCommit** is a production-grade CLI that:
-
-* analyzes your staged git diff
-* generates a high-quality commit message via LLMs
-* enforces Conventional Commits
-* blocks secrets and dependency folders **before** commit
-* works with both **cloud and local** AI models
-
-If you care about **clean history, security, and standards** — this tool is for you.
-
----
-
-## ✨ Key Features
-
-### 🤖 AI Providers
-
-* OpenRouter (200+ models — Gemini, Claude, GPT, and more)
-* OpenAI (GPT‑4o, GPT‑4o‑mini)
-* Local models via **Ollama** (offline & private)
-* **Any OpenAI‑compatible endpoint** — bring your own provider with a custom
-  `baseUrl`, API key, model, and auth header (see [Custom providers](#-custom-providers))
-
-Sensible defaults out of the box: `google/gemini-2.5-flash-lite` on OpenRouter
-(cheap, fast, great structured output) and `gpt-4o-mini` on OpenAI.
-
-### 🧠 Smart Commit Generation
-
-* **Schema-constrained output** — the model is forced to return valid structured
-  JSON (json_schema / constrained decoding), so responses don't need brittle parsing
-* **Grounded in your diff** — messages describe only what the diff actually shows,
-  no invented or boilerplate changes
-* Token-aware diff chunking (large repos supported)
-* Interactive regeneration with feedback
-* Custom prompts & project context
-* Conventional Commits by default
-
-### 🔐 Security by Default
-
-* Secret scanning via **Gitleaks** (100+ patterns)
-* Blocks API keys, tokens, private keys
-* Prevents committing `node_modules/`, `vendor/`, etc.
-* Secure API key storage (600 permissions)
-
-### ⚙️ Git-Native Workflow
-
-* Breaking change detection
-* Optional push after commit
-* Git hooks support
-
-### ⚡ Fast & Reliable
-
-* Per-repository memory + disk cache (no cross-project message bleed)
-* Parallel API calls
-* Strict TypeScript + comprehensive tests
-
----
-
-## 🚀 Quick Start
+## Install
 
 ```bash
 npm install -g orcommit
-orc config set openrouter YOUR_API_KEY
-
-git add .
-orc commit
 ```
 
-That’s it.
-
-> **Don't use `sudo npm install -g`.** A root-owned global install creates files
-> that break every later (non-sudo) update with `EACCES`. If `npm install -g`
-> asks for elevated permissions, your npm prefix is system-owned — fix it once
-> with a user-owned prefix (no sudo ever again):
+> **Never use `sudo npm install -g`.** A root-owned install breaks every later
+> update with `EACCES`. If the install asks for elevated permissions, fix your
+> npm prefix once (no sudo ever again):
 >
 > ```bash
 > mkdir -p ~/.npm-global
@@ -109,75 +37,180 @@ That’s it.
 > source ~/.zshrc
 > ```
 
-### Updating
+Update with `npm install -g orcommit@latest`. ORCommit tells you when a new
+version exists — it never auto-installs and never asks for sudo.
+
+---
+
+## Setup (60 seconds)
+
+Pick a provider and give it a key.
+
+**OpenRouter** (recommended — 200+ models, one key):
 
 ```bash
-npm install -g orcommit@latest
+orc config set openrouter YOUR_API_KEY
 ```
 
-orc also tells you when a newer version is available. It never auto-installs and
-never asks for sudo.
-
-### Troubleshooting
-
-If `orc` reports the wrong version, won't update, or you suspect duplicate
-installs, run the built-in diagnostic — it inspects your npm prefix, every `orc`
-on your `PATH`, and the installed-vs-latest version, then prints exact fixes:
+**OpenAI:**
 
 ```bash
-orc doctor
+orc config set openai YOUR_API_KEY
 ```
 
----
-
-## 🛠 Common Commands
+Then commit:
 
 ```bash
-orc commit                 # interactive commit
-orc commit --yes           # auto-confirm
-orc commit --context "..." # extra context
-orc commit --emoji         # gitmoji
-orc commit --breaking      # breaking change
-orc commit --dry-run       # preview only
-orc doctor                 # diagnose install / PATH / update issues
+git add .
+orc commit
 ```
 
-👉 [Full CLI reference](https://github.com/markolofsen/openrouter-commit/blob/main/docs/cli.md)
+That's it. **Whichever provider you configure last becomes the active one** —
+configure a key (or a custom provider), and it's immediately used. You normally
+keep just one active provider and never think about it.
 
 ---
 
-## 🔐 Security Highlights
+## How it works
 
-ORCommit includes **mandatory security checks**:
+When you run `orc commit`, ORCommit:
 
-* 🔍 Secret scanning via **Gitleaks**
-* 🚫 Blocks API keys, tokens, private keys
-* 🚫 Prevents committing dependency folders
+1. **Reads** your staged diff (`git add` first — it only looks at staged changes).
+2. **Scans** it for secrets with Gitleaks. If it finds an API key, token, or
+   private key, it **stops** — nothing is committed.
+3. **Sends** the diff to your AI provider, which returns a structured commit
+   message (schema-constrained JSON, so no brittle text parsing).
+4. **Shows** you the message. You confirm, regenerate with feedback, or edit it.
+5. **Commits** (and optionally pushes).
 
-These checks run **before** commit creation and cannot be bypassed accidentally.
-
-👉 [Security details](https://github.com/markolofsen/openrouter-commit/blob/main/docs/security.md)
-
----
-
-## 💡 Who Is ORCommit For?
-
-* **Teams** — enforce commit standards automatically
-* **Open Source** — keep contribution quality high
-* **Enterprise** — prevent leaks and ensure compliance
+Large diffs are chunked automatically, and messages are cached per-repository so
+the same diff isn't re-billed.
 
 ---
 
-## ⚙️ Configuration
+## Everyday commands
 
-Config is stored at `~/.config/orcommit.json` (permissions `600`).
+```bash
+orc commit                  # interactive — review before committing
+orc commit -y               # auto-confirm, skip the prompt
+orc commit -p openai        # use a specific provider for this commit
+orc commit --dry-run        # generate the message, don't commit
+orc commit --context "..."  # give the AI extra context
+orc commit --emoji          # gitmoji style
+orc commit --breaking       # mark as a breaking change
+```
+
+| Command | What it does |
+|---|---|
+| `orc commit` | Generate and create a commit |
+| `orc config` | Manage providers and settings |
+| `orc test [provider]` | Check a provider's connection works |
+| `orc doctor` | Diagnose install / PATH / update problems |
+| `orc cache` | Manage the commit-message cache |
+
+Full flag list: `orc commit --help`.
+
+---
+
+## Managing providers
+
+See everything that's configured:
+
+```bash
+orc config get              # all providers + the current default
+orc config path             # where the config file lives
+```
+
+Set or change a key / model on an existing provider:
+
+```bash
+orc config set <provider> <api-key>
+orc config model <provider> <model>
+```
+
+Add **any OpenAI-compatible endpoint** as a custom provider:
+
+```bash
+orc config provider <name> \
+  --base-url <url> \
+  --key <api-key> \
+  --model <model> \
+  --auth-header <header>   # optional — default: Authorization
+  --auth-scheme <scheme>   # optional — default: Bearer (pass "" to send the key raw)
+```
+
+> Custom providers **must** set `--model`. ORCommit only ships default models for
+> the built-in `openrouter` and `openai` providers — it can't guess a third
+> party's catalog.
+
+Use a provider for one commit, or remove it:
+
+```bash
+orc commit -p <name>
+orc config remove-provider <name>     # can't remove the current default — switch first
+```
+
+### Switching the active provider
+
+Configuring a provider already makes it active, so usually there's nothing to
+do. To switch back to an already-configured provider (e.g. your default ran out
+of credit and you want to use another one you'd set up earlier):
+
+```bash
+orc config default <name>
+```
+
+Or pass `-p <name>` on a single commit without changing the active provider.
+
+Removing the active provider automatically falls back to another configured one
+— you never end up with the default pointing at a provider that's gone.
+
+---
+
+## Example: a custom provider (cmdop)
+
+[cmdop](https://cmdop.com)'s router is fully OpenAI-compatible — it authenticates
+with the standard `Authorization: Bearer` header and uses quality-tier model
+aliases like `@cheap` / `@fast` / `@balanced` / `@smart`. So you add it like any
+other provider, no extra flags:
+
+```bash
+orc config provider cmdop \
+  --base-url https://router.cmdop.com/v1 \
+  --key YOUR_CMDOP_API_KEY \
+  --model @fast
+
+orc commit -p cmdop
+```
+
+This adds an entry to `~/.config/orcommit.json`:
 
 ```json
 {
   "providers": {
-    "openrouter": {
-      "model": "google/gemini-2.5-flash-lite"
+    "cmdop": {
+      "baseUrl": "https://router.cmdop.com/v1",
+      "apiKey": "YOUR_CMDOP_API_KEY",
+      "model": "@fast"
     }
+  }
+}
+```
+
+> Need a non-standard auth header (a provider that wants the key in `X-API-Key`
+> instead of `Authorization: Bearer`)? Add `--auth-header X-API-Key` — see
+> [Custom providers](#managing-providers) above. cmdop doesn't need it.
+
+---
+
+## Configuration
+
+Config lives at `~/.config/orcommit.json` (permissions `600`). A minimal file:
+
+```json
+{
+  "providers": {
+    "openrouter": { "model": "google/gemini-2.5-flash-lite" }
   },
   "preferences": {
     "defaultProvider": "openrouter",
@@ -188,84 +221,31 @@ Config is stored at `~/.config/orcommit.json` (permissions `600`).
 ```
 
 > A low `temperature` (default `0.3`) keeps messages grounded in the actual diff
-> and avoids drifting into generic, memorized phrasings.
+> instead of drifting into generic phrasing.
 
-Environment variables are also supported:
+API keys can also come from the environment:
 
 ```bash
 export OPENROUTER_API_KEY="your-key"
 export OPENAI_API_KEY="your-key"
 ```
 
----
-
-## 🔌 Custom providers
-
-Providers are an **open dictionary** — you're not limited to OpenRouter and
-OpenAI. Any OpenAI‑compatible `/chat/completions` endpoint works: point ORCommit
-at its `baseUrl`, give it a key, a model, and (if it doesn't use
-`Authorization: Bearer`) a custom auth header.
-
-```bash
-# One command to configure a brand‑new provider:
-orc config provider <name> \
-  --base-url <url> \
-  --key <api-key> \
-  --model <model> \
-  --auth-header <header>   # optional, default: Authorization
-  --auth-scheme <scheme>   # optional, default: Bearer (pass "" to send the key raw)
-```
-
-Then commit with it via `-p <name>`, or make it the default:
-
-```bash
-orc commit -p <name>
-orc config get               # lists every configured provider + its model
-orc config remove-provider <name>
-```
-
-> Custom providers **must** set `--model` — ORCommit ships default models only
-> for the built‑in `openrouter`/`openai` providers; it can't guess a third
-> party's catalog.
-
-### Example: cmdop router
-
-[cmdop](https://cmdop.com)'s router is OpenAI‑compatible but authenticates with
-an `X-API-Key` header (not `Authorization: Bearer`) and uses quality‑tier model
-aliases like `@cheap` / `@fast` / `@balanced` / `@smart`:
-
-```bash
-orc config provider cmdop \
-  --base-url https://router.cmdop.com/v1 \
-  --key YOUR_CMDOP_API_KEY \
-  --model @fast \
-  --auth-header X-API-Key
-
-orc commit -p cmdop
-```
-
-This writes an entry to `~/.config/orcommit.json`:
-
-```json
-{
-  "providers": {
-    "cmdop": {
-      "baseUrl": "https://router.cmdop.com/v1",
-      "apiKey": "YOUR_CMDOP_API_KEY",
-      "model": "@fast",
-      "authHeader": "X-API-Key"
-    }
-  }
-}
-```
-
-Because `authHeader` is not `Authorization`, the key is sent **raw** (no `Bearer`
-prefix). For endpoints that do use bearer auth with a non‑standard scheme, set
-`--auth-scheme` instead.
+Defaults out of the box: `google/gemini-2.5-flash-lite` on OpenRouter (cheap,
+fast, good structured output) and `gpt-4o-mini` on OpenAI.
 
 ---
 
-## 📚 Documentation
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `402 Insufficient credits` | Your provider is out of credit. Top up, switch with `orc config default <name>`, or commit once via `-p <name>`. |
+| Wrong version / won't update / duplicate installs | Run `orc doctor`. |
+| Provider not responding | Run `orc test <provider>` to check the connection. |
+
+---
+
+## Documentation
 
 * [CLI Reference](https://github.com/markolofsen/openrouter-commit/blob/main/docs/cli.md)
 * [Security Model](https://github.com/markolofsen/openrouter-commit/blob/main/docs/security.md)
@@ -274,27 +254,9 @@ prefix). For endpoints that do use bearer auth with a non‑standard scheme, set
 
 ---
 
-## 🤝 Contributing
+## About
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests
-4. Submit a pull request
-
----
-
-## 🏢 About the Maintainers
-
-ORCommit is built and maintained by **[Reforms.ai](https://reforms.ai)** — a team specializing in AI-powered developer tools.
-
-Commercial support, consulting, and custom AI integrations are available.
-
----
-
-## 📄 License
+ORCommit is built and maintained by **[Reforms.ai](https://reforms.ai)**.
+Commercial support and custom AI integrations are available.
 
 MIT License — see [LICENSE](LICENSE).
-
----
-
-Built with ❤️ using TypeScript and modern AI tooling.

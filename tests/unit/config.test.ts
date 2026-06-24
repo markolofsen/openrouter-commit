@@ -140,6 +140,50 @@ describe('ConfigManager', () => {
       
       expect(savedConfig.providers.openai.apiKey).toBe('openai-key');
     });
+
+    it('should make the configured provider the active default', async () => {
+      mockFs.access.mockRejectedValue(new Error('ENOENT'));
+      mockFs.readFile.mockResolvedValue(JSON.stringify(DEFAULT_CONFIG));
+
+      await configManager.setApiKey('openai', 'openai-key');
+
+      const saveCall = mockFs.writeFile.mock.calls[1];
+      const savedConfig = JSON.parse(saveCall[1] as string);
+
+      expect(savedConfig.preferences.defaultProvider).toBe('openai');
+    });
+  });
+
+  describe('setDefaultProvider', () => {
+    it('should switch the active provider to an already-configured one', async () => {
+      const configWithTwo = {
+        ...DEFAULT_CONFIG,
+        providers: {
+          ...DEFAULT_CONFIG.providers,
+          openai: { ...DEFAULT_CONFIG.providers.openai, apiKey: 'k' },
+        },
+        preferences: { ...DEFAULT_CONFIG.preferences, defaultProvider: 'openrouter' },
+      };
+
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue(JSON.stringify(configWithTwo));
+
+      await configManager.setDefaultProvider('openai');
+
+      const saveCall = mockFs.writeFile.mock.calls.at(-1)!;
+      const savedConfig = JSON.parse(saveCall[1] as string);
+
+      expect(savedConfig.preferences.defaultProvider).toBe('openai');
+    });
+
+    it('should reject an unconfigured provider', async () => {
+      mockFs.access.mockResolvedValue(undefined);
+      mockFs.readFile.mockResolvedValue(JSON.stringify(DEFAULT_CONFIG));
+
+      await expect(configManager.setDefaultProvider('nope')).rejects.toThrow(
+        /not configured/
+      );
+    });
   });
 
   describe('getApiKey', () => {

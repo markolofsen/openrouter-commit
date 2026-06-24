@@ -517,6 +517,80 @@ describe('ApiManager', () => {
     });
   });
 
+  describe('extractErrorDetail', () => {
+    const detail = (data: unknown) => (apiManager as any).extractErrorDetail(data);
+
+    it('reads OpenAI/OpenRouter { error: { message } }', () => {
+      expect(detail({ error: { message: 'bad model' } })).toBe('bad model');
+    });
+
+    it('reads string error', () => {
+      expect(detail({ error: 'nope' })).toBe('nope');
+    });
+
+    it('reads FastAPI/Pydantic detail array (cmdop 422 shape)', () => {
+      const body = {
+        detail: [
+          { type: 'extra_forbidden', loc: ['body', 'provider'], msg: 'Extra inputs are not permitted' },
+          { type: 'extra_forbidden', loc: ['body', 'plugins'], msg: 'Extra inputs are not permitted' },
+        ],
+      };
+      expect(detail(body)).toBe(
+        'body.provider: Extra inputs are not permitted; body.plugins: Extra inputs are not permitted'
+      );
+    });
+
+    it('reads FastAPI string detail', () => {
+      expect(detail({ detail: 'boom' })).toBe('boom');
+    });
+
+    it('reads plain { message }', () => {
+      expect(detail({ message: 'plain' })).toBe('plain');
+    });
+
+    it('reads a raw string body', () => {
+      expect(detail('error code: 502')).toBe('error code: 502');
+    });
+
+    it('returns undefined when nothing useful is present', () => {
+      expect(detail({ foo: 'bar' })).toBeUndefined();
+      expect(detail(null)).toBeUndefined();
+    });
+  });
+
+  describe('isOpenRouter', () => {
+    const isOR = (p: string) => (apiManager as any).isOpenRouter(p);
+
+    it('treats the openrouter provider as OpenRouter', () => {
+      apiManager.initializeProvider('openrouter', mockConfig);
+      expect(isOR('openrouter')).toBe(true);
+    });
+
+    it('treats a custom provider on openrouter.ai as OpenRouter', () => {
+      const cfg = {
+        ...mockConfig,
+        providers: {
+          ...mockConfig.providers,
+          custom: { baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k', model: 'm' },
+        },
+      } as any;
+      apiManager.initializeProvider('custom', cfg);
+      expect(isOR('custom')).toBe(true);
+    });
+
+    it('treats a non-openrouter endpoint as not OpenRouter', () => {
+      const cfg = {
+        ...mockConfig,
+        providers: {
+          ...mockConfig.providers,
+          cmdop: { baseUrl: 'https://router.cmdop.com/v1', apiKey: 'k', model: '@fast', authHeader: 'X-API-Key' },
+        },
+      } as any;
+      apiManager.initializeProvider('cmdop', cfg);
+      expect(isOR('cmdop')).toBe(false);
+    });
+  });
+
   describe('error handling edge cases', () => {
     beforeEach(() => {
       apiManager.initializeProvider('openrouter', mockConfig);

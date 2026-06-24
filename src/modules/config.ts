@@ -79,6 +79,10 @@ export class ConfigManager {
           apiKey,
         },
       },
+      // Configuring a provider makes it the active default — the user keeps
+      // a single active provider instead of juggling several. "What you touch
+      // becomes active."
+      preferences: { ...config.preferences, defaultProvider: provider },
     };
 
     await this.save(updatedConfig);
@@ -107,6 +111,8 @@ export class ConfigManager {
           model,
         },
       },
+      // Touching a provider makes it the active default (see setApiKey).
+      preferences: { ...config.preferences, defaultProvider: provider },
     };
 
     await this.save(updatedConfig);
@@ -146,9 +152,33 @@ export class ConfigManager {
           ...patch,
         },
       },
+      // Configuring a provider makes it the active default (see setApiKey).
+      preferences: { ...config.preferences, defaultProvider: provider },
     };
 
     await this.save(updatedConfig);
+  }
+
+  /**
+   * Set the active (default) provider explicitly. Used by the rare case where
+   * several providers are configured and the user wants to switch back to one
+   * without re-entering its key — e.g. the current default ran out of credit.
+   * Refuses unknown providers so the default can never point at a missing entry.
+   */
+  async setDefaultProvider(provider: string): Promise<void> {
+    const config = await this.load();
+
+    if (!(provider in config.providers)) {
+      throw new ConfigError(
+        `Provider '${provider}' is not configured. Configure it first ` +
+          `(e.g. orc config set ${provider} <key>).`
+      );
+    }
+
+    await this.save({
+      ...config,
+      preferences: { ...config.preferences, defaultProvider: provider },
+    });
   }
 
   /**
@@ -158,24 +188,33 @@ export class ConfigManager {
   async removeProvider(provider: string): Promise<void> {
     const config = await this.load();
 
-    if (config.preferences.defaultProvider === provider) {
-      throw new ConfigError(
-        `Cannot remove provider '${provider}' because it is the current default provider. ` +
-          `Set a different default first (orc config get to inspect).`
-      );
-    }
-
     if (!(provider in config.providers)) {
       throw new ConfigError(`Provider '${provider}' is not configured.`);
     }
 
     const { [provider]: _removed, ...remaining } = config.providers;
-    const updatedConfig: Config = {
+
+    // If we just removed the active default, fall back to another configured
+    // provider so the default never points at a missing entry. With the
+    // "single active provider" model this is the common case — the user
+    // removes the one they were using and the remaining one takes over.
+    let defaultProvider = config.preferences.defaultProvider;
+    if (defaultProvider === provider) {
+      const fallback = Object.keys(remaining)[0];
+      if (!fallback) {
+        throw new ConfigError(
+          `Cannot remove '${provider}': it is the only configured provider. ` +
+            `Configure another first (e.g. orc config set <provider> <key>).`
+        );
+      }
+      defaultProvider = fallback;
+    }
+
+    await this.save({
       ...config,
       providers: remaining,
-    };
-
-    await this.save(updatedConfig);
+      preferences: { ...config.preferences, defaultProvider },
+    });
   }
 
   /**
